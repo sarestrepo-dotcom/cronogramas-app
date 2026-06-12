@@ -1,0 +1,301 @@
+import {
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  documentId,
+  onSnapshot,
+  serverTimestamp,
+  Timestamp,
+  type DocumentData,
+} from 'firebase/firestore'
+import { db, functions } from './firebase'
+import { httpsCallable } from 'firebase/functions'
+import type { Empresa, Proyecto, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig } from '@/types'
+
+function clean(obj: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
+}
+
+// ─── Usuarios ────────────────────────────────────────────────────────────────
+
+export async function upsertUsuario(uid: string, data: Partial<UsuarioApp>) {
+  const ref = doc(db, 'usuarios', uid)
+  const snap = await getDoc(ref)
+  if (snap.exists()) {
+    await updateDoc(ref, { ...data })
+  } else {
+    await updateDoc(ref, { ...data, empresas: [], creadoEn: serverTimestamp() }).catch(async () => {
+      const colRef = collection(db, 'usuarios')
+      await addDoc(colRef, { uid, ...data, empresas: [], creadoEn: serverTimestamp() })
+    })
+  }
+}
+
+export async function getUsuario(uid: string): Promise<UsuarioApp | null> {
+  const snap = await getDoc(doc(db, 'usuarios', uid))
+  if (!snap.exists()) return null
+  return { id: snap.id, ...snap.data() } as unknown as UsuarioApp
+}
+
+// ─── Empresas ─────────────────────────────────────────────────────────────────
+
+export async function crearEmpresa(data: Omit<Empresa, 'id' | 'creadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'empresas'), {
+    ...data,
+    creadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export async function actualizarEmpresa(id: string, data: Partial<Empresa>) {
+  await updateDoc(doc(db, 'empresas', id), clean(data as Record<string, unknown>) as DocumentData)
+}
+
+export async function eliminarEmpresa(id: string) {
+  await deleteDoc(doc(db, 'empresas', id))
+}
+
+export function suscribirEmpresasDeUsuario(uid: string, cb: (empresas: Empresa[]) => void) {
+  const q = query(
+    collection(db, 'empresas'),
+    where(`miembros.${uid}`, 'in', ['owner', 'admin', 'miembro', 'viewer'])
+  )
+  return onSnapshot(q, (snap) => {
+    const empresas = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Empresa)
+      .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
+    cb(empresas)
+  })
+}
+
+// Fetch only specific empresas by ID (for non-admin users with restricted access)
+export function suscribirEmpresasPorIds(ids: string[], cb: (empresas: Empresa[]) => void) {
+  if (ids.length === 0) { cb([]); return () => {} }
+  const chunks = ids.slice(0, 10) // Firestore 'in' limit
+  const q = query(collection(db, 'empresas'), where(documentId(), 'in', chunks))
+  return onSnapshot(q, (snap) => {
+    const empresas = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Empresa)
+      .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
+    cb(empresas)
+  })
+}
+
+// Fetch all empresas — admin-only use
+export async function listarTodasLasEmpresas(): Promise<Empresa[]> {
+  const snap = await getDocs(collection(db, 'empresas'))
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }) as Empresa)
+    .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
+}
+
+// ─── Proyectos ────────────────────────────────────────────────────────────────
+
+export async function crearProyecto(data: Omit<Proyecto, 'id' | 'creadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'proyectos'), {
+    ...data,
+    creadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export async function actualizarProyecto(id: string, data: Partial<Proyecto>) {
+  await updateDoc(doc(db, 'proyectos', id), data as DocumentData)
+}
+
+export async function eliminarProyecto(id: string) {
+  await deleteDoc(doc(db, 'proyectos', id))
+}
+
+export function suscribirProyectosPorEmpresa(empresaId: string, uid: string, cb: (proyectos: Proyecto[]) => void) {
+  // Single-field query avoids composite index requirement; membership filtered in memory
+  const q = query(collection(db, 'proyectos'), where('empresaId', '==', empresaId))
+  return onSnapshot(q, (snap) => {
+    const ROLES = ['owner', 'admin', 'miembro', 'viewer']
+    const proyectos = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Proyecto)
+      .filter((p) => ROLES.includes((p.miembros as Record<string, string>)?.[uid]))
+      .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
+    cb(proyectos)
+  })
+}
+
+export function suscribirTodosProyectosDeUsuario(_uid: string, empresaIds: string[], cb: (proyectos: Proyecto[]) => void) {
+  if (empresaIds.length === 0) { cb([]); return () => {} }
+  const q = query(
+    collection(db, 'proyectos'),
+    where('empresaId', 'in', empresaIds.slice(0, 10)),
+  )
+  return onSnapshot(q, (snap) => {
+    const proyectos = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Proyecto)
+      .sort((a, b) => a.fechaFin?.seconds - b.fechaFin?.seconds)
+    cb(proyectos)
+  })
+}
+
+// ─── Tareas ───────────────────────────────────────────────────────────────────
+
+export async function crearTarea(data: Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'tareas'), {
+    ...clean(data as Record<string, unknown>),
+    creadoEn: serverTimestamp(),
+    actualizadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export async function actualizarTarea(id: string, data: Partial<Tarea>) {
+  await updateDoc(doc(db, 'tareas', id), {
+    ...clean(data as Record<string, unknown>) as DocumentData,
+    actualizadoEn: serverTimestamp(),
+  })
+}
+
+export async function eliminarTarea(id: string) {
+  await deleteDoc(doc(db, 'tareas', id))
+}
+
+export function suscribirTareasPorProyecto(proyectoId: string, cb: (tareas: Tarea[]) => void) {
+  const q = query(
+    collection(db, 'tareas'),
+    where('proyectoId', '==', proyectoId)
+  )
+  return onSnapshot(q, (snap) => {
+    const tareas = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Tarea)
+      .sort((a, b) => a.fechaInicio?.seconds - b.fechaInicio?.seconds)
+    cb(tareas)
+  })
+}
+
+export function suscribirTareasProximasAVencer(empresaIds: string[], diasLimite: number, cb: (tareas: Tarea[]) => void) {
+  if (empresaIds.length === 0) { cb([]); return () => {} }
+  // Single-field query avoids composite index; date range and status filtered in memory
+  const q = query(collection(db, 'tareas'), where('empresaId', 'in', empresaIds.slice(0, 10)))
+  return onSnapshot(q, (snap) => {
+    const ahora = Timestamp.now()
+    const limite = Timestamp.fromDate(new Date(Date.now() + diasLimite * 86400000))
+    const tareas = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Tarea)
+      .filter((t) =>
+        (t.estado === 'pendiente' || t.estado === 'en_progreso') &&
+        t.fechaFin?.seconds >= ahora.seconds &&
+        t.fechaFin?.seconds <= limite.seconds
+      )
+      .sort((a, b) => a.fechaFin?.seconds - b.fechaFin?.seconds)
+    cb(tareas)
+  })
+}
+
+// ─── Invitaciones ─────────────────────────────────────────────────────────────
+
+export async function crearInvitacion(data: Omit<Invitacion, 'id' | 'creadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'invitaciones'), {
+    ...data,
+    creadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export async function aceptarInvitacion(invitacionId: string, uid: string) {
+  const invRef = doc(db, 'invitaciones', invitacionId)
+  const invSnap = await getDoc(invRef)
+  if (!invSnap.exists()) throw new Error('Invitación no encontrada')
+
+  const inv = invSnap.data() as Invitacion
+  await updateDoc(doc(db, 'empresas', inv.empresaId), {
+    [`miembros.${uid}`]: inv.rol,
+  })
+  await updateDoc(invRef, { estado: 'aceptada' })
+}
+
+export async function getInvitacionesPendientes(email: string): Promise<Invitacion[]> {
+  const q = query(
+    collection(db, 'invitaciones'),
+    where('emailDestino', '==', email),
+    where('estado', '==', 'pendiente')
+  )
+  const snap = await getDocs(q)
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Invitacion)
+}
+
+// ─── Permisos ─────────────────────────────────────────────────────────────────
+
+export async function invitarMiembroEmpresa(empresaId: string, email: string, rol: Rol, creadoPor: string, empresaNombre: string) {
+  return crearInvitacion({
+    empresaId,
+    empresaNombre,
+    emailDestino: email,
+    rol,
+    estado: 'pendiente',
+    creadoPor,
+  })
+}
+
+export function puedeEditar(rol: Rol | undefined): boolean {
+  return rol === 'owner' || rol === 'admin'
+}
+
+export function puedeAdmin(rol: Rol | undefined): boolean {
+  return rol === 'owner'
+}
+
+// ─── Lista blanca de acceso (usuarios_permitidos) ─────────────────────────────
+
+export async function getPermiso(email: string): Promise<UsuarioPermitido | null> {
+  const snap = await getDoc(doc(db, 'usuarios_permitidos', email))
+  if (!snap.exists()) return null
+  return snap.data() as UsuarioPermitido
+}
+
+export async function contarPermitidos(): Promise<number> {
+  const snap = await getDocs(collection(db, 'usuarios_permitidos'))
+  return snap.size
+}
+
+export async function crearPermiso(data: Omit<UsuarioPermitido, 'creadoEn'>): Promise<void> {
+  await setDoc(doc(db, 'usuarios_permitidos', data.email), {
+    ...data,
+    empresas: data.empresas ?? [],
+    creadoEn: serverTimestamp(),
+  })
+}
+
+export async function actualizarPermiso(email: string, data: Partial<Omit<UsuarioPermitido, 'email' | 'creadoEn'>>): Promise<void> {
+  await updateDoc(doc(db, 'usuarios_permitidos', email), data)
+}
+
+export async function eliminarPermiso(email: string): Promise<void> {
+  await deleteDoc(doc(db, 'usuarios_permitidos', email))
+}
+
+// ─── Email config ─────────────────────────────────────────────────────────────
+
+export async function getEmailConfig(uid: string): Promise<EmailConfig | null> {
+  const snap = await getDoc(doc(db, 'email_config', uid))
+  return snap.exists() ? (snap.data() as EmailConfig) : null
+}
+
+export async function guardarEmailConfig(uid: string, config: Omit<EmailConfig, 'uid'>): Promise<void> {
+  await setDoc(doc(db, 'email_config', uid), { ...config, uid })
+}
+
+export async function enviarEmailAhora(): Promise<void> {
+  const fn = httpsCallable(functions, 'enviarEmailAhora')
+  await fn({})
+}
+
+
+export function suscribirPermitidos(cb: (lista: UsuarioPermitido[]) => void): () => void {
+  return onSnapshot(collection(db, 'usuarios_permitidos'), (snap) => {
+    cb(snap.docs.map((d) => d.data() as UsuarioPermitido))
+  })
+}

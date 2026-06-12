@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isMiembroEmpresa(empresaId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros;
+    }
+
+    function rolEmpresa(empresaId) {
+      return get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros[request.auth.uid];
+    }
+
+    function puedeEditar(empresaId) {
+      return rolEmpresa(empresaId) in ['owner', 'admin'];
+    }
+
+    // Usuarios
+    match /usuarios/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Empresas
+    match /empresas/{empresaId} {
+      allow read: if isMiembroEmpresa(empresaId);
+      allow create: if isSignedIn();
+      allow update: if puedeEditar(empresaId);
+      allow delete: if rolEmpresa(empresaId) == 'owner';
+    }
+
+    // Proyectos
+    match /proyectos/{proyectoId} {
+      allow read: if isSignedIn() && isMiembroEmpresa(resource.data.empresaId);
+      allow create: if isSignedIn() && puedeEditar(request.resource.data.empresaId);
+      allow update: if isSignedIn() && puedeEditar(resource.data.empresaId);
+      allow delete: if isSignedIn() && puedeEditar(resource.data.empresaId);
+    }
+
+    // Tareas
+    match /tareas/{tareaId} {
+      allow read: if isSignedIn() && isMiembroEmpresa(resource.data.empresaId);
+      allow create: if isSignedIn() && isMiembroEmpresa(request.resource.data.empresaId);
+      allow update: if isSignedIn() && isMiembroEmpresa(resource.data.empresaId);
+      allow delete: if isSignedIn() && puedeEditar(resource.data.empresaId);
+    }
+
+    // Invitaciones
+    match /invitaciones/{invId} {
+      allow read: if isSignedIn() && (
+        resource.data.emailDestino == request.auth.token.email ||
+        resource.data.creadoPor == request.auth.uid
+      );
+      allow create: if isSignedIn() && puedeEditar(request.resource.data.empresaId);
+      allow update: if isSignedIn() && resource.data.emailDestino == request.auth.token.email;
+    }
+  }
+}
