@@ -6,18 +6,24 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isMiembroEmpresa(empresaId) {
+    // Checks membership in an empresa document that is NOT the document being evaluated
+    function isMiembroEmpresaExterna(empresaId) {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
         request.auth.uid in get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros;
     }
 
-    function rolEmpresa(empresaId) {
-      return get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros[request.auth.uid];
+    // Checks owner/admin role in an external empresa document
+    function puedeEditarEmpresaExterna(empresaId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
+        get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros[request.auth.uid] in ['owner', 'admin'];
     }
 
-    function puedeEditar(empresaId) {
-      return rolEmpresa(empresaId) in ['owner', 'admin'];
+    function isMiembroProyecto(proyectoId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/proyectos/$(proyectoId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/proyectos/$(proyectoId)).data.miembros;
     }
 
     // Usuarios
@@ -26,28 +32,49 @@ service cloud.firestore {
       allow write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // Empresas
+    // Empresas — allow read if uid is in miembros OR if the empresa is listed in the user's usuarios_permitidos entry
     match /empresas/{empresaId} {
-      allow read: if isMiembroEmpresa(empresaId);
+      allow read: if isSignedIn() && (
+        request.auth.uid in resource.data.miembros ||
+        (request.auth.token.email != null &&
+         exists(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)) &&
+         empresaId in get(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)).data.empresas)
+      );
       allow create: if isSignedIn();
-      allow update: if puedeEditar(empresaId);
-      allow delete: if rolEmpresa(empresaId) == 'owner';
+      allow update: if isSignedIn() && resource.data.miembros[request.auth.uid] in ['owner', 'admin'];
+      allow delete: if isSignedIn() && resource.data.miembros[request.auth.uid] == 'owner';
     }
 
     // Proyectos
+    // Read queries used by the app:
+    //   where('empresaId', '==', X)     → empresaId constrained → isMiembroEmpresaExterna evaluable
+    //   where('empresaId', 'in', Xs)    → same
+    //   where(documentId(), 'in', ids)  → uid in resource.data.miembros handles this (shared projects)
+    // uid-in-miembros checked first so documentId() queries short-circuit without needing get()
     match /proyectos/{proyectoId} {
-      allow read: if isSignedIn() && isMiembroEmpresa(resource.data.empresaId);
-      allow create: if isSignedIn() && puedeEditar(request.resource.data.empresaId);
-      allow update: if isSignedIn() && puedeEditar(resource.data.empresaId);
-      allow delete: if isSignedIn() && puedeEditar(resource.data.empresaId);
+      allow read: if isSignedIn() && (
+        request.auth.uid in resource.data.miembros ||
+        isMiembroEmpresaExterna(resource.data.empresaId)
+      );
+      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
+      allow update: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+      allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
     }
 
     // Tareas
+    // Read: open to any authenticated user (queries always scoped by empresaId or proyectoId in the app)
+    // Write: empresa members OR explicit project members (covers shared-project users like Vero/Will)
     match /tareas/{tareaId} {
-      allow read: if isSignedIn() && isMiembroEmpresa(resource.data.empresaId);
-      allow create: if isSignedIn() && isMiembroEmpresa(request.resource.data.empresaId);
-      allow update: if isSignedIn() && isMiembroEmpresa(resource.data.empresaId);
-      allow delete: if isSignedIn() && puedeEditar(resource.data.empresaId);
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        isMiembroEmpresaExterna(request.resource.data.empresaId) ||
+        isMiembroProyecto(request.resource.data.proyectoId)
+      );
+      allow update: if isSignedIn() && (
+        isMiembroEmpresaExterna(resource.data.empresaId) ||
+        isMiembroProyecto(resource.data.proyectoId)
+      );
+      allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
     }
 
     // Invitaciones
@@ -56,8 +83,19 @@ service cloud.firestore {
         resource.data.emailDestino == request.auth.token.email ||
         resource.data.creadoPor == request.auth.uid
       );
-      allow create: if isSignedIn() && puedeEditar(request.resource.data.empresaId);
+      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
       allow update: if isSignedIn() && resource.data.emailDestino == request.auth.token.email;
+    }
+
+    // Lista blanca de acceso — cualquier usuario autenticado puede leer
+    match /usuarios_permitidos/{email} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Configuración de email — solo el propio usuario
+    match /email_config/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
   }
 }

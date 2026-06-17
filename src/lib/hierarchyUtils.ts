@@ -58,8 +58,7 @@ export function buildHierarchy(tareas: Tarea[]): HierarchyRow[] {
 }
 
 // ─── enrichTareas ─────────────────────────────────────────────────────────────
-// Derives estado + progreso for grupos from their direct children (pure, no side effects)
-// progreso = average of children's progreso values
+// Derives estado, progreso, fechaInicio and fechaFin for grupos from their direct children.
 export function enrichTareas(tareas: Tarea[]): Tarea[] {
   return tareas.map((tarea) => {
     if (tarea.tipo !== 'grupo') return tarea
@@ -77,6 +76,15 @@ export function enrichTareas(tareas: Tarea[]): Tarea[] {
     else if (children.some((t) => t.estado === 'en_progreso' || (t.progreso ?? 0) > 0)) estado = 'en_progreso'
     else estado = 'pendiente'
 
-    return { ...tarea, progreso, estado }
+    // Derive date span: earliest child start → latest child end
+    const withDates = children.filter((t) => t.fechaInicio && t.fechaFin)
+    if (withDates.length === 0) return { ...tarea, progreso, estado }
+
+    const fechaInicio = withDates.reduce((min, t) =>
+      t.fechaInicio.seconds < min.seconds ? t.fechaInicio : min, withDates[0].fechaInicio)
+    const fechaFin = withDates.reduce((max, t) =>
+      t.fechaFin.seconds > max.seconds ? t.fechaFin : max, withDates[0].fechaFin)
+
+    return { ...tarea, progreso, estado, fechaInicio, fechaFin }
   })
 }

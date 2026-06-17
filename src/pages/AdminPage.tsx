@@ -6,8 +6,9 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
 import {
-  suscribirPermitidos, crearPermiso, actualizarPermiso,
-  eliminarPermiso, listarTodasLasEmpresas,
+  suscribirPermitidos, crearPermiso, actualizarPermiso, eliminarPermiso,
+  suscribirEmpresasDeUsuario, buscarUsuarioPorEmail,
+  agregarMiembroEmpresa, removerMiembroEmpresa,
 } from '@/lib/firestore'
 import type { Empresa, UsuarioPermitido } from '@/types'
 
@@ -253,23 +254,54 @@ function GestionarEmpresasModal({ permiso, onClose }: {
   permiso: UsuarioPermitido
   onClose: () => void
 }) {
+  const { user } = useAuth()
   const [todas, setTodas]       = useState<Empresa[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set(permiso.empresas ?? []))
   const [loading, setLoading]   = useState(true)
   const [saving, setSaving]     = useState(false)
 
   useEffect(() => {
-    listarTodasLasEmpresas().then(e => { setTodas(e); setLoading(false) })
-  }, [])
+    if (!user) return
+    const unsub = suscribirEmpresasDeUsuario(user.uid, (empresas) => {
+      setTodas(empresas)
+      setLoading(false)
+    })
+    return unsub
+  }, [user?.uid])
 
   const toggle = (id: string) =>
     setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
 
   const handleSave = async () => {
     setSaving(true)
-    await actualizarPermiso(permiso.email, { empresas: [...selected] })
-    setSaving(false)
-    onClose()
+    try {
+      const prevIds = new Set(permiso.empresas ?? [])
+      const toAdd    = [...selected].filter(id => !prevIds.has(id))
+      const toRemove = [...prevIds].filter(id => !selected.has(id))
+
+      // Sync empresa.miembros so Firestore rules and queries work for this user
+      const usuario = await buscarUsuarioPorEmail(permiso.email)
+      const uid = usuario?.uid ?? (usuario as unknown as { id?: string })?.id ?? null
+
+      if (uid) {
+        await Promise.all([
+          // Add as viewer to newly assigned empresas (only if not already a member)
+          ...toAdd.map(async (id) => {
+            const emp = todas.find(e => e.id === id)
+            if (emp && !(uid in (emp.miembros ?? {}))) {
+              await agregarMiembroEmpresa(id, uid, 'viewer')
+            }
+          }),
+          // Remove from unassigned empresas
+          ...toRemove.map(id => removerMiembroEmpresa(id, uid)),
+        ])
+      }
+
+      await actualizarPermiso(permiso.email, { empresas: [...selected] })
+    } finally {
+      setSaving(false)
+      onClose()
+    }
   }
 
   const isAdmin = permiso.rol === 'admin'

@@ -13,6 +13,7 @@ interface TareasTablaProps {
   empresaId: string
   uid: string
   rutaCritica?: Set<string>
+  onEditTarea?: (tarea: Tarea) => void
 }
 
 interface FilaNueva {
@@ -35,7 +36,7 @@ const PRIORIDAD_STYLES: Record<Tarea['prioridad'], string> = {
   critica: 'bg-red-100 text-red-700',
 }
 
-export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }: TareasTablaProps) {
+export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, onEditTarea }: TareasTablaProps) {
   const today = new Date().toISOString().split('T')[0]
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -44,7 +45,16 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
   const [guardando, setGuardando] = useState(false)
   const [depEditingId, setDepEditingId] = useState<string | null>(null)
   const [cascadeMsg, setCascadeMsg] = useState('')
-  const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [respEditingId, setRespEditingId] = useState<string | null>(null)
+  const [respInput, setRespInput] = useState('')
+
+  useEffect(() => {
+    if (mostrarFila && scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    }
+  }, [mostrarFila])
 
   useEffect(() => {
     if (!depEditingId) return
@@ -52,6 +62,45 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [depEditingId])
+
+  useEffect(() => {
+    if (!respEditingId) return
+    const close = () => { setRespEditingId(null); setRespInput('') }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [respEditingId])
+
+  const fasesExistentes = useMemo(
+    () => [...new Set(tareas.map((t) => t.fase).filter(Boolean) as string[])].sort(),
+    [tareas],
+  )
+
+  const parseDate = (s: string, time: string): Date | null => {
+    if (!s) return null
+    const d = new Date(s + time)
+    if (isNaN(d.getTime()) || d.getFullYear() > 9999) return null
+    return d
+  }
+
+  const safeIso = (ts: Timestamp | undefined): string => {
+    try {
+      const d = tsToDate(ts)
+      if (isNaN(d.getTime())) return today
+      return d.toISOString().split('T')[0]
+    } catch {
+      return today
+    }
+  }
+
+  const getResponsables = (tarea: Tarea): string[] =>
+    tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])
+
+  const updateResponsables = async (tarea: Tarea, newList: string[]) => {
+    await actualizarTarea(tarea.id, {
+      asignadosA: newList,
+      asignadoA: newList[0] ?? undefined,
+    })
+  }
 
   const rows = useMemo(() => buildHierarchy(enrichTareas(tareas)), [tareas])
 
@@ -73,17 +122,28 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
     const { field } = editingCell
     let update: Partial<Tarea> = {}
     if (field === 'titulo') update = { titulo: editValue }
-    else if (field === 'fechaInicio') update = { fechaInicio: Timestamp.fromDate(new Date(editValue + 'T00:00:00')) }
-    else if (field === 'fechaFin') update = { fechaFin: Timestamp.fromDate(new Date(editValue + 'T23:59:59')) }
+    else if (field === 'fechaInicio') {
+      const d = parseDate(editValue, 'T00:00:00')
+      if (!d) { setEditingCell(null); return }
+      update = { fechaInicio: Timestamp.fromDate(d) }
+    }
+    else if (field === 'fechaFin') {
+      const d = parseDate(editValue, 'T23:59:59')
+      if (!d) { setEditingCell(null); return }
+      update = { fechaFin: Timestamp.fromDate(d) }
+    }
     else if (field === 'prioridad') update = { prioridad: editValue as Tarea['prioridad'] }
     else if (field === 'estado') update = { estado: editValue as EstadoTarea }
     else if (field === 'progreso') update = { progreso: Math.min(100, Math.max(0, Number(editValue))) }
     else if (field === 'responsable') update = { asignadoA: editValue.trim() || undefined }
+    else if (field === 'notas') update = { notas: editValue.trim() || undefined }
+    else if (field === 'entregables') update = { entregables: editValue.trim() || undefined }
     await actualizarTarea(tarea.id, update)
     setEditingCell(null)
 
     if (field === 'fechaFin' && editValue) {
       const nuevaFechaFin = new Date(editValue + 'T23:59:59')
+      if (isNaN(nuevaFechaFin.getTime()) || nuevaFechaFin.getFullYear() > 9999) return
       const updates = await aplicarCascada(tareas, tarea.id, nuevaFechaFin)
       if (updates.length > 0) {
         setCascadeMsg(`↳ ${updates.length} tarea${updates.length > 1 ? 's' : ''} ajustada${updates.length > 1 ? 's' : ''} por dependencia`)
@@ -100,15 +160,17 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
   }
 
   const handleGuardarFila = async () => {
-    if (!fila.titulo.trim() || !fila.fechaFin) return
+    const fi = parseDate(fila.fechaInicio, 'T00:00:00')
+    const ff = parseDate(fila.fechaFin, 'T23:59:59')
+    if (!fila.titulo.trim() || !ff) return
     setGuardando(true)
     try {
       await crearTarea({
         titulo: fila.titulo.trim(),
         descripcion: '',
         fase: fila.fase.trim() || undefined,
-        fechaInicio: Timestamp.fromDate(new Date(fila.fechaInicio + 'T00:00:00')),
-        fechaFin: Timestamp.fromDate(new Date(fila.fechaFin + 'T23:59:59')),
+        fechaInicio: Timestamp.fromDate(fi ?? new Date()),
+        fechaFin: Timestamp.fromDate(ff),
         estado: fila.estado,
         prioridad: fila.prioridad,
         progreso: 0,
@@ -126,11 +188,12 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
   }
 
   return (
-    <div className="p-4 overflow-x-auto">
+    <div className="h-full flex flex-col">
+    <div ref={scrollRef} className="flex-1 min-h-0 overflow-x-auto overflow-y-auto p-4">
       <table className="w-full text-sm border-separate border-spacing-0">
         <thead>
           <tr>
-            {['Tarea', 'Fase', 'Fecha inicio', 'Fecha fin', 'Estado', 'Prioridad', 'Responsable', 'Depende de', 'Progreso', ''].map((h) => (
+            {['Tarea', 'Fase', 'Fecha inicio', 'Fecha fin', 'Estado', 'Prioridad', 'Responsable(s)', 'Depende de', 'Progreso', 'Notas', 'Entregables', ''].map((h) => (
               <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200 bg-slate-50 first:rounded-tl-xl last:rounded-tr-xl">
                 {h}
               </th>
@@ -143,7 +206,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
             if (row.kind === 'fase_header') {
               return (
                 <tr key={`fase-${row.label}`}>
-                  <td colSpan={10} className="px-3 py-2 border-b border-indigo-100 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wider">
+                  <td colSpan={12} className="px-3 py-2 border-b border-indigo-100 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wider">
                     {row.label}
                   </td>
                 </tr>
@@ -178,8 +241,8 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
                           <span title="Ruta crítica" className="flex-shrink-0 w-2 h-2 rounded-full bg-red-500" />
                         )}
                         <span
-                          onClick={() => startEdit(tarea.id, 'titulo', tarea.titulo)}
-                          className={cn('cursor-text block truncate hover:text-indigo-600',
+                          onClick={() => onEditTarea ? onEditTarea(tarea) : startEdit(tarea.id, 'titulo', tarea.titulo)}
+                          className={cn('cursor-pointer block truncate hover:text-indigo-600 underline decoration-dotted underline-offset-2 decoration-slate-300 hover:decoration-indigo-400',
                             isGrupo ? 'font-semibold text-slate-800' : 'text-slate-900')}
                         >
                           {tarea.titulo}
@@ -206,7 +269,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
                       value={editValue} onChange={(e) => setEditValue(e.target.value)}
                       onBlur={() => commitEdit(tarea)} onKeyDown={(e) => handleKeyDown(e, tarea)} />
                   ) : (
-                    <span onClick={() => startEdit(tarea.id, 'fechaInicio', tsToDate(tarea.fechaInicio).toISOString().split('T')[0])}
+                    <span onClick={() => startEdit(tarea.id, 'fechaInicio', safeIso(tarea.fechaInicio))}
                       className="cursor-text text-slate-600 hover:text-indigo-600">
                       {tsToDate(tarea.fechaInicio).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
                     </span>
@@ -221,7 +284,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
                       value={editValue} onChange={(e) => setEditValue(e.target.value)}
                       onBlur={() => commitEdit(tarea)} onKeyDown={(e) => handleKeyDown(e, tarea)} />
                   ) : (
-                    <span onClick={() => startEdit(tarea.id, 'fechaFin', tsToDate(tarea.fechaFin).toISOString().split('T')[0])}
+                    <span onClick={() => startEdit(tarea.id, 'fechaFin', safeIso(tarea.fechaFin))}
                       className="cursor-text text-slate-600 hover:text-indigo-600">
                       {tsToDate(tarea.fechaFin).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: '2-digit' })}
                     </span>
@@ -263,38 +326,49 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
                   )}
                 </td>
 
-                {/* Responsable */}
-                <td className="px-3 py-2 border-b border-slate-100 max-w-[140px]">
-                  {editingCell?.id === tarea.id && editingCell.field === 'responsable' ? (
-                    <input
-                      ref={inputRef as React.RefObject<HTMLInputElement>}
-                      className="w-full bg-white border border-indigo-400 rounded-lg px-2 py-1 text-sm focus:outline-none"
-                      placeholder="Nombre..."
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={() => commitEdit(tarea)}
-                      onKeyDown={(e) => handleKeyDown(e, tarea)}
-                    />
-                  ) : tarea.asignadoA ? (
-                    <button
-                      onClick={() => startEdit(tarea.id, 'responsable', tarea.asignadoA ?? '')}
-                      className="flex items-center gap-1.5 hover:text-indigo-600 transition-colors group/resp"
-                    >
-                      <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-bold flex items-center justify-center flex-shrink-0">
-                        {tarea.asignadoA.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
-                      </span>
-                      <span className="text-xs text-slate-600 group-hover/resp:text-indigo-600 truncate max-w-[90px]">
-                        {tarea.asignadoA}
-                      </span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => startEdit(tarea.id, 'responsable', '')}
-                      className="text-slate-300 hover:text-indigo-400 text-xs transition-colors"
-                    >
-                      + asignar
-                    </button>
-                  )}
+                {/* Responsable(s) — multi-person */}
+                <td className="px-3 py-2 border-b border-slate-100">
+                  <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-wrap gap-1 items-center min-w-[100px]">
+                      {getResponsables(tarea).map((r, i) => (
+                        <span key={i} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[10px] font-medium px-1.5 py-0.5 rounded-full">
+                          <span className="w-3.5 h-3.5 rounded-full bg-indigo-200 text-indigo-700 text-[8px] font-bold flex items-center justify-center flex-shrink-0">
+                            {r.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
+                          </span>
+                          <span className="max-w-[60px] truncate">{r.split(' ')[0]}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); updateResponsables(tarea, getResponsables(tarea).filter((_, j) => j !== i)) }}
+                            className="text-indigo-400 hover:text-indigo-700 ml-0.5"
+                          >×</button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={() => setRespEditingId(respEditingId === tarea.id ? null : tarea.id)}
+                        className="text-slate-300 hover:text-indigo-500 text-xs transition-colors leading-none"
+                        title="Agregar responsable"
+                      >+</button>
+                    </div>
+                    {respEditingId === tarea.id && (
+                      <div className="absolute z-50 top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-44" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-400"
+                          placeholder="Nombre del responsable..."
+                          value={respInput}
+                          onChange={(e) => setRespInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && respInput.trim()) {
+                              updateResponsables(tarea, [...getResponsables(tarea), respInput.trim()])
+                              setRespInput('')
+                              setRespEditingId(null)
+                            }
+                            if (e.key === 'Escape') { setRespEditingId(null); setRespInput('') }
+                          }}
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1 px-1">Enter para agregar · Esc para cerrar</p>
+                      </div>
+                    )}
+                  </div>
                 </td>
 
                 {/* Depende de */}
@@ -361,6 +435,74 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
                   )}
                 </td>
 
+                {/* Notas */}
+                <td className="px-3 py-2 border-b border-slate-100 max-w-[160px]">
+                  {editingCell?.id === tarea.id && editingCell.field === 'notas' ? (
+                    <textarea
+                      ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+                      className="w-40 h-20 bg-white border border-indigo-400 rounded-lg px-2 py-1 text-xs focus:outline-none resize-none"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={() => commitEdit(tarea)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
+                    />
+                  ) : (
+                    <span
+                      onClick={() => startEdit(tarea.id, 'notas', tarea.notas ?? '')}
+                      className="cursor-text text-xs text-slate-500 hover:text-indigo-600 line-clamp-2 block"
+                    >
+                      {tarea.notas || <span className="text-slate-300">+ nota</span>}
+                    </span>
+                  )}
+                </td>
+
+                {/* Entregables */}
+                <td className="px-3 py-2 border-b border-slate-100 max-w-[180px]">
+                  {editingCell?.id === tarea.id && editingCell.field === 'entregables' ? (
+                    <textarea
+                      ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+                      className="w-44 h-20 bg-white border border-indigo-400 rounded-lg px-2 py-1 text-xs focus:outline-none resize-none"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={() => commitEdit(tarea)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') cancelEdit() }}
+                    />
+                  ) : tarea.entregables ? (
+                    /^https?:\/\//.test(tarea.entregables) ? (
+                      <div className="flex items-center gap-1 group/ent">
+                        <a
+                          href={tarea.entregables}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-indigo-600 hover:underline truncate max-w-[130px] block"
+                          title={tarea.entregables}
+                        >
+                          {tarea.entregables.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+                        </a>
+                        <button
+                          onClick={() => startEdit(tarea.id, 'entregables', tarea.entregables ?? '')}
+                          className="opacity-0 group-hover/ent:opacity-100 text-slate-300 hover:text-slate-500 text-[10px] transition-all"
+                          title="Editar"
+                        >✎</button>
+                      </div>
+                    ) : (
+                      <span
+                        onClick={() => startEdit(tarea.id, 'entregables', tarea.entregables ?? '')}
+                        className="cursor-text text-xs text-slate-500 hover:text-indigo-600 line-clamp-2 block"
+                      >
+                        {tarea.entregables}
+                      </span>
+                    )
+                  ) : (
+                    <span
+                      onClick={() => startEdit(tarea.id, 'entregables', '')}
+                      className="cursor-text text-xs text-slate-300 hover:text-indigo-400 block"
+                    >
+                      + entregable
+                    </span>
+                  )}
+                </td>
+
                 {/* Acciones */}
                 <td className="px-3 py-2 border-b border-slate-100">
                   <button onClick={() => { if (confirm('¿Eliminar tarea?')) eliminarTarea(tarea.id) }}
@@ -383,8 +525,11 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
               </td>
               <td className="px-3 py-2">
                 <input className="w-full bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
-                  placeholder="Fase..." value={fila.fase}
+                  list="fases-datalist" placeholder="Fase..." value={fila.fase}
                   onChange={(e) => setFila({ ...fila, fase: e.target.value })} />
+                <datalist id="fases-datalist">
+                  {fasesExistentes.map((f) => <option key={f} value={f} />)}
+                </datalist>
               </td>
               <td className="px-3 py-2">
                 <input type="date" className="bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
@@ -413,9 +558,11 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
               </td>
               <td className="px-3 py-2 text-xs text-slate-400">—</td>
               <td className="px-3 py-2 text-xs text-slate-400">0%</td>
+              <td className="px-3 py-2 text-xs text-slate-400">—</td>
+              <td className="px-3 py-2 text-xs text-slate-400">—</td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-1">
-                  <button onClick={handleGuardarFila} disabled={guardando || !fila.titulo.trim() || !fila.fechaFin}
+                  <button onClick={handleGuardarFila} disabled={guardando || !fila.titulo.trim() || !parseDate(fila.fechaFin, 'T23:59:59')}
                     className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
                     <Check size={13} />
                   </button>
@@ -428,24 +575,26 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica }:
           )}
         </tbody>
       </table>
+    </div>
 
-      {!mostrarFila && (
+    {/* Sticky footer: always visible at the bottom of the table panel */}
+    <div className="flex-shrink-0 bg-white border-t border-slate-100 px-4 py-2.5 flex items-center justify-between">
+      {!mostrarFila ? (
         <button onClick={() => setMostrarFila(true)}
-          className="flex items-center gap-2 mt-2 ml-3 text-sm text-slate-500 hover:text-indigo-600 transition-colors">
+          className="flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 transition-colors">
           <Plus size={15} /> Agregar tarea
         </button>
-      )}
-
-      <div className="flex items-center justify-between mt-4 ml-3">
+      ) : (
         <p className="text-xs text-slate-400">
           Haz clic en cualquier celda para editarla · Enter para confirmar · Esc para cancelar
         </p>
-        {cascadeMsg && (
-          <span className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl animate-pulse">
-            {cascadeMsg}
-          </span>
-        )}
-      </div>
+      )}
+      {cascadeMsg && (
+        <span className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl animate-pulse">
+          {cascadeMsg}
+        </span>
+      )}
+    </div>
     </div>
   )
 }

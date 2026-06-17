@@ -52,14 +52,17 @@ export function ProyectoDetailPage() {
   const rutaCritica = useMemo(() => calcularRutaCritica(enrichedTareas), [enrichedTareas])
 
   const responsables = useMemo(() =>
-    [...new Set(tareas.map(t => t.asignadoA).filter(Boolean) as string[])].sort(),
+    [...new Set(tareas.flatMap(t => t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])))].sort(),
     [tareas])
   const grupos = useMemo(() => tareas.filter(t => t.tipo === 'grupo'), [tareas])
 
   const filteredTareas = useMemo(() => {
     if (!filtroResponsable && !filtroGrupo) return enrichedTareas
     return enrichedTareas.filter(t => {
-      if (filtroResponsable && t.asignadoA !== filtroResponsable) return false
+      if (filtroResponsable) {
+        const todos = t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])
+        if (!todos.includes(filtroResponsable)) return false
+      }
       if (filtroGrupo) {
         // Show the grupo itself and its children
         if (t.id === filtroGrupo) return true
@@ -75,15 +78,25 @@ export function ProyectoDetailPage() {
     if (empresa) setEmpresaActiva(empresa)
   }, [empresa])
 
-  // Sync derived estado/progreso back to Firestore for grupos
+  // Sync derived estado/progreso/fechas back to Firestore for grupos
   useEffect(() => {
     if (tareas.length === 0) return
     for (const enriched of enrichedTareas) {
       if (enriched.tipo !== 'grupo') continue
       const original = tareas.find((t) => t.id === enriched.id)
       if (!original) continue
-      if (original.progreso !== enriched.progreso || original.estado !== enriched.estado) {
-        actualizarTarea(enriched.id, { progreso: enriched.progreso, estado: enriched.estado })
+      const changed =
+        original.progreso !== enriched.progreso ||
+        original.estado !== enriched.estado ||
+        original.fechaInicio?.seconds !== enriched.fechaInicio?.seconds ||
+        original.fechaFin?.seconds !== enriched.fechaFin?.seconds
+      if (changed) {
+        actualizarTarea(enriched.id, {
+          progreso: enriched.progreso,
+          estado: enriched.estado,
+          fechaInicio: enriched.fechaInicio,
+          fechaFin: enriched.fechaFin,
+        })
       }
     }
   }, [enrichedTareas])
@@ -186,7 +199,7 @@ export function ProyectoDetailPage() {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className={cn('flex-1 min-h-0', vista === 'tabla' && topTab === 'cronograma' ? 'overflow-hidden' : 'overflow-auto')}>
         {topTab === 'dashboard' ? (
           <ProyectoDashboard tareas={enrichedTareas} />
         ) : loading ? (
@@ -196,7 +209,14 @@ export function ProyectoDetailPage() {
         ) : tareas.length === 0 && vista !== 'tabla' ? (
           <EmptyTareas onNew={() => setShowModal(true)} onImport={() => setShowImport(true)} />
         ) : vista === 'tabla' ? (
-          <TareasTabla tareas={filteredTareas} proyectoId={proyectoId!} empresaId={empresaId!} uid={user!.uid} rutaCritica={rutaCritica} />
+          <TareasTabla
+            tareas={filteredTareas}
+            proyectoId={proyectoId!}
+            empresaId={empresaId!}
+            uid={user!.uid}
+            rutaCritica={rutaCritica}
+            onEditTarea={(t) => { setEditTarea(t); setShowModal(true) }}
+          />
         ) : vista === 'kanban' ? (
           <KanbanView
             tareas={filteredTareas}
@@ -463,14 +483,14 @@ function TareaRow({ tarea, menuOpen, esCritica, onMenuToggle, onMenuClose, onEdi
           <span className="text-xs text-slate-500 flex items-center gap-1">
             <Clock size={11} /> {formatFecha(tarea.fechaInicio)} – {formatFecha(tarea.fechaFin)}
           </span>
-          {tarea.asignadoA && (
-            <span className="text-xs text-slate-500 flex items-center gap-1">
+          {(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).map((r, i) => (
+            <span key={i} className="text-xs text-slate-500 flex items-center gap-1">
               <span className="w-4 h-4 rounded-full bg-indigo-100 text-indigo-600 text-[9px] font-bold flex items-center justify-center">
-                {tarea.asignadoA.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase()}
+                {r.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase()}
               </span>
-              {tarea.asignadoA}
+              {r}
             </span>
-          )}
+          ))}
           {tarea.progreso > 0 && <span className="text-xs text-slate-400">{tarea.progreso}%</span>}
           {(tarea.dependencias?.length ?? 0) > 0 && (
             <span className="text-xs text-slate-400 flex items-center gap-0.5">
@@ -533,7 +553,18 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
   const [estado, setEstado] = useState<EstadoTarea>(tarea?.estado ?? 'pendiente')
   const [prioridad, setPrioridad] = useState(tarea?.prioridad ?? 'media')
   const [progreso, setProgreso] = useState(tarea?.progreso ?? 0)
-  const [responsable, setResponsable] = useState(tarea?.asignadoA ?? '')
+  const [responsables, setResponsables] = useState<string[]>(
+    tarea ? (tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])) : []
+  )
+  const [newResp, setNewResp] = useState('')
+
+  const addResp = () => {
+    const trimmed = newResp.trim()
+    if (trimmed && !responsables.includes(trimmed)) {
+      setResponsables([...responsables, trimmed])
+    }
+    setNewResp('')
+  }
   const [dependencias, setDependencias] = useState<string[]>(tarea?.dependencias ?? [])
   const [links, setLinks] = useState<string[]>(tarea?.links ?? [])
   const [newLink, setNewLink] = useState('')
@@ -552,21 +583,26 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    const fin = tipo === 'hito' ? fechaInicio : fechaFin
+    const fiDate = new Date(fechaInicio + 'T00:00:00')
+    const ffDate = new Date(fin + 'T23:59:59')
     if (!titulo.trim() || !fechaFin) return
+    if (isNaN(fiDate.getTime()) || fiDate.getFullYear() > 9999) return
+    if (isNaN(ffDate.getTime()) || ffDate.getFullYear() > 9999) return
     setSaving(true)
     try {
-      const fin = tipo === 'hito' ? fechaInicio : fechaFin
       const data: Partial<Tarea> = {
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
         tipo,
         parentId: parentId || undefined,
-        fechaInicio: Timestamp.fromDate(new Date(fechaInicio + 'T00:00:00')),
-        fechaFin: Timestamp.fromDate(new Date(fin + 'T23:59:59')),
+        fechaInicio: Timestamp.fromDate(fiDate),
+        fechaFin: Timestamp.fromDate(ffDate),
         estado,
         prioridad: prioridad as Tarea['prioridad'],
         progreso,
-        asignadoA: responsable.trim() || undefined,
+        asignadoA: responsables[0] || undefined,
+        asignadosA: responsables.length > 0 ? responsables : undefined,
         dependencias,
         links: links.filter(l => l.trim()),
         fase: fase.trim() || undefined,
@@ -576,8 +612,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
         const update: Record<string, unknown> = { ...data }
         if (!parentId && tarea.parentId) update.parentId = deleteField()
         await actualizarTarea(tarea.id, update as Partial<Tarea>)
-        const nuevaFechaFin = new Date(fin + 'T23:59:59')
-        const updates = await aplicarCascada(tareas, tarea.id, nuevaFechaFin)
+        const updates = await aplicarCascada(tareas, tarea.id, ffDate)
         if (updates.length > 0) onCascade?.(updates.length)
       } else {
         await crearTarea({
@@ -698,10 +733,37 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             </FormField>
           )}
 
-          {/* Responsable */}
-          <FormField label="Responsable (opcional)">
-            <input className="input-base" value={responsable} onChange={(e) => setResponsable(e.target.value)}
-              placeholder="Nombre de quien está a cargo" />
+          {/* Responsable(s) */}
+          <FormField label="Responsable(s) (opcional)">
+            <div className="space-y-2">
+              {responsables.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {responsables.map((r, i) => (
+                    <span key={i} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-1 rounded-full">
+                      {r}
+                      <button type="button"
+                        onClick={() => setResponsables(responsables.filter((_, j) => j !== i))}
+                        className="text-indigo-400 hover:text-indigo-700 ml-0.5 leading-none">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  className="input-base flex-1"
+                  value={newResp}
+                  onChange={(e) => setNewResp(e.target.value)}
+                  placeholder="Nombre de quien está a cargo..."
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addResp() } }}
+                />
+                {newResp.trim() && (
+                  <button type="button" onClick={addResp}
+                    className="flex-shrink-0 px-3 py-2 text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl transition-colors">
+                    Agregar
+                  </button>
+                )}
+              </div>
+            </div>
           </FormField>
 
           {/* Dependencias */}

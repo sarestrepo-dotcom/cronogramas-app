@@ -44,12 +44,14 @@ export interface Tarea {
   tipo?: TipoTarea
   parentId?: string
   orden?: number
-  asignadoA?: string
+  asignadoA?: string       // primary responsable (backwards compat / email matching)
+  asignadosA?: string[]    // all responsables (multi-person)
   dependencias: string[]
   progreso: number
   links?: string[]
-  fase?: string      // top-level phase label, e.g. "F1 - Cimentar"
-  notas?: string     // internal planning notes / AI notes
+  fase?: string
+  notas?: string
+  entregables?: string     // deliverables / output description
   creadoPor: string
   creadoEn: Timestamp
   actualizadoEn: Timestamp
@@ -70,6 +72,7 @@ export interface UsuarioPermitido {
   rol: 'admin' | 'usuario'
   activo: boolean
   empresas: string[]   // empresaIds permitidas (vacío = sin acceso a ninguna para usuarios; ignorado para admins)
+  proyectosCompartidos?: string[]  // proyectoIds compartidos directamente con este usuario
   agregadoPor: string
   creadoEn: Timestamp
 }

@@ -5,6 +5,9 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
+  arrayUnion,
+  arrayRemove,
   getDoc,
   getDocs,
   query,
@@ -56,6 +59,14 @@ export async function crearEmpresa(data: Omit<Empresa, 'id' | 'creadoEn'>): Prom
 
 export async function actualizarEmpresa(id: string, data: Partial<Empresa>) {
   await updateDoc(doc(db, 'empresas', id), clean(data as Record<string, unknown>) as DocumentData)
+}
+
+export async function agregarMiembroEmpresa(empresaId: string, uid: string, rol: Rol): Promise<void> {
+  await updateDoc(doc(db, 'empresas', empresaId), { [`miembros.${uid}`]: rol })
+}
+
+export async function removerMiembroEmpresa(empresaId: string, uid: string): Promise<void> {
+  await updateDoc(doc(db, 'empresas', empresaId), { [`miembros.${uid}`]: deleteField() })
 }
 
 export async function eliminarEmpresa(id: string) {
@@ -114,17 +125,69 @@ export async function eliminarProyecto(id: string) {
   await deleteDoc(doc(db, 'proyectos', id))
 }
 
-export function suscribirProyectosPorEmpresa(empresaId: string, uid: string, cb: (proyectos: Proyecto[]) => void) {
-  // Single-field query avoids composite index requirement; membership filtered in memory
+export function suscribirProyectosPorEmpresa(empresaId: string, _uid: string, cb: (proyectos: Proyecto[]) => void) {
+  // Firestore rules enforce empresa membership; no additional in-memory filter needed
   const q = query(collection(db, 'proyectos'), where('empresaId', '==', empresaId))
   return onSnapshot(q, (snap) => {
-    const ROLES = ['owner', 'admin', 'miembro', 'viewer']
     const proyectos = snap.docs
       .map((d) => ({ id: d.id, ...d.data() }) as Proyecto)
-      .filter((p) => ROLES.includes((p.miembros as Record<string, string>)?.[uid]))
       .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
     cb(proyectos)
   })
+}
+
+// Projects shared directly with the user, queried by explicit project IDs stored in their permiso
+export function suscribirProyectosCompartidosConUsuario(
+  proyectoIds: string[],
+  misEmpresaIds: string[],
+  cb: (proyectos: Proyecto[]) => void
+) {
+  if (proyectoIds.length === 0) { cb([]); return () => {} }
+  const ids = proyectoIds.slice(0, 10) // Firestore 'in' limit
+  const q = query(collection(db, 'proyectos'), where(documentId(), 'in', ids))
+  return onSnapshot(
+    q,
+    (snap) => {
+      const proyectos = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }) as Proyecto)
+        .filter((p) => !misEmpresaIds.includes(p.empresaId))
+        .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
+      cb(proyectos)
+    },
+    () => cb([]) // silencia errores de permiso (e.g. si el proyecto fue eliminado)
+  )
+}
+
+// Subscribe to a user's permiso document for real-time updates to proyectosCompartidos
+export function suscribirPermisoUsuario(email: string, cb: (permiso: UsuarioPermitido | null) => void) {
+  return onSnapshot(doc(db, 'usuarios_permitidos', email), (snap) => {
+    cb(snap.exists() ? (snap.data() as UsuarioPermitido) : null)
+  })
+}
+
+export async function agregarMiembroProyecto(proyectoId: string, uid: string, rol: Rol, email: string): Promise<void> {
+  await updateDoc(doc(db, 'proyectos', proyectoId), {
+    [`miembros.${uid}`]: rol,
+  })
+  await updateDoc(doc(db, 'usuarios_permitidos', email), {
+    proyectosCompartidos: arrayUnion(proyectoId),
+  })
+}
+
+export async function removerMiembroProyecto(proyectoId: string, uid: string, email: string): Promise<void> {
+  await updateDoc(doc(db, 'proyectos', proyectoId), {
+    [`miembros.${uid}`]: deleteField(),
+  })
+  await updateDoc(doc(db, 'usuarios_permitidos', email), {
+    proyectosCompartidos: arrayRemove(proyectoId),
+  })
+}
+
+export async function buscarUsuarioPorEmail(email: string): Promise<UsuarioApp | null> {
+  const q = query(collection(db, 'usuarios'), where('email', '==', email))
+  const snap = await getDocs(q)
+  if (snap.empty) return null
+  return { id: snap.docs[0].id, ...snap.docs[0].data() } as unknown as UsuarioApp
 }
 
 export function suscribirTodosProyectosDeUsuario(_uid: string, empresaIds: string[], cb: (proyectos: Proyecto[]) => void) {
@@ -288,9 +351,15 @@ export async function guardarEmailConfig(uid: string, config: Omit<EmailConfig, 
   await setDoc(doc(db, 'email_config', uid), { ...config, uid })
 }
 
-export async function enviarEmailAhora(): Promise<void> {
+export async function previewEmailSemanal(): Promise<Array<{nombre: string; email: string; body: string}>> {
+  const fn = httpsCallable(functions, 'previewEmailSemanal')
+  const result = await fn({})
+  return (result.data as { previews: Array<{nombre: string; email: string; body: string}> }).previews
+}
+
+export async function enviarEmailAhora(customBodies?: Array<{nombre: string; email: string; body: string}>): Promise<void> {
   const fn = httpsCallable(functions, 'enviarEmailAhora')
-  await fn({})
+  await fn({ customBodies })
 }
 
 

@@ -147,12 +147,21 @@ function KanbanCard({ tarea, grupoNombre, isDragging, onDragStart, onDragEnd, on
           <Calendar size={10} />
           {formatFecha(tarea.fechaFin, 'dd MMM')}
         </span>
-        {tarea.asignadoA && (
-          <div
-            className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-700"
-            title={tarea.asignadoA}
-          >
-            {tarea.asignadoA.split(' ').slice(0, 2).map(n => n[0] ?? '').join('').toUpperCase()}
+        {(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).length > 0 && (
+          <div className="flex items-center -space-x-1.5">
+            {(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).slice(0, 3).map((r, i) => (
+              <div key={i}
+                className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-[10px] font-bold text-indigo-700 ring-2 ring-white"
+                title={r}
+              >
+                {r.split(' ').slice(0, 2).map(n => n[0] ?? '').join('').toUpperCase()}
+              </div>
+            ))}
+            {(tarea.asignadosA?.length ?? 0) > 3 && (
+              <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 ring-2 ring-white">
+                +{(tarea.asignadosA?.length ?? 0) - 3}
+              </div>
+            )}
           </div>
         )}
       </div>

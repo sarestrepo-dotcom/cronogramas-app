@@ -13,10 +13,12 @@ import {
   Plus,
   Menu,
   X,
+  Share2,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
 import { useEmpresas } from '@/hooks/useEmpresas'
+import { useProyectosCompartidos } from '@/hooks/useProyectos'
 import type { Empresa } from '@/types'
 
 interface SidebarProps {
@@ -27,6 +29,8 @@ interface SidebarProps {
 export function Sidebar({ empresaActiva, onEmpresaChange }: SidebarProps) {
   const { user, logout, isAdmin } = useAuth()
   const { empresas } = useEmpresas()
+  const misEmpresaIds = empresas.map((e) => e.id)
+  const { proyectos: compartidos } = useProyectosCompartidos(misEmpresaIds)
   const location = useLocation()
   const navigate = useNavigate()
   const [expandEmpresas, setExpandEmpresas] = useState(true)
@@ -118,6 +122,35 @@ export function Sidebar({ empresaActiva, onEmpresaChange }: SidebarProps) {
               label="Proyectos"
               active={isActive(`/empresa/${empresaActiva.id}/proyectos`)}
             />
+          </div>
+        )}
+
+        {/* Proyectos compartidos directamente con el usuario */}
+        {compartidos.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-700/50">
+            <p className="px-3 py-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Compartidos conmigo
+            </p>
+            <div className="mt-1 space-y-0.5">
+              {compartidos.map((proyecto) => {
+                const path = `/empresa/${proyecto.empresaId}/proyecto/${proyecto.id}`
+                return (
+                  <Link
+                    key={proyecto.id}
+                    to={path}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors',
+                      isActive(path)
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    )}
+                  >
+                    <Share2 size={14} className="flex-shrink-0" />
+                    <span className="truncate">{proyecto.nombre}</span>
+                  </Link>
+                )
+              })}
+            </div>
           </div>
         )}
       </nav>

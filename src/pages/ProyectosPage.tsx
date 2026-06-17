@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom'
-import { Plus, FolderKanban, Calendar, MoreVertical, Trash2, ExternalLink, Users } from 'lucide-react'
+import { Plus, FolderKanban, Calendar, MoreVertical, Trash2, ExternalLink, Users, Share2, UserPlus, X } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import { useProyectos } from '@/hooks/useProyectos'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useAuth } from '@/hooks/useAuth'
-import { crearProyecto, eliminarProyecto } from '@/lib/firestore'
+import { crearProyecto, eliminarProyecto, agregarMiembroProyecto, removerMiembroProyecto, buscarUsuarioPorEmail, getUsuario } from '@/lib/firestore'
 import { cn, formatFecha } from '@/lib/utils'
-import type { Empresa, Proyecto } from '@/types'
+import type { Empresa, Proyecto, Rol, UsuarioApp } from '@/types'
 import { COLORES_EMPRESAS as COLORES_MAP } from '@/types'
 
 const ESTADO_CONFIG = {
@@ -29,8 +29,11 @@ export function ProyectosPage() {
 
   const [showModal, setShowModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [compartirProyecto, setCompartirProyecto] = useState<Proyecto | null>(null)
 
   const empresa = empresas.find((e) => e.id === empresaId)
+  const miRol = empresa?.miembros[user!.uid] as Rol | undefined
+  const puedoCompartir = miRol === 'owner' || miRol === 'admin'
 
   useEffect(() => {
     if (empresa) setEmpresaActiva(empresa)
@@ -75,10 +78,12 @@ export function ProyectosPage() {
             <ProyectoCard
               key={proyecto.id}
               proyecto={proyecto}
+              puedoCompartir={puedoCompartir}
               menuOpen={menuOpen === proyecto.id}
               onMenuToggle={() => setMenuOpen(menuOpen === proyecto.id ? null : proyecto.id)}
               onMenuClose={() => setMenuOpen(null)}
               onAbrir={() => navigate(`/empresa/${empresaId}/proyecto/${proyecto.id}`)}
+              onCompartir={() => { setCompartirProyecto(proyecto); setMenuOpen(null) }}
               onEliminar={async () => { if (confirm('¿Eliminar proyecto?')) await eliminarProyecto(proyecto.id) }}
             />
           ))}
@@ -93,16 +98,26 @@ export function ProyectosPage() {
           onCreate={(id) => { setShowModal(false); navigate(`/empresa/${empresaId}/proyecto/${id}`) }}
         />
       )}
+
+      {compartirProyecto && (
+        <CompartirProyectoModal
+          proyecto={compartirProyecto}
+          miUid={user!.uid}
+          onClose={() => setCompartirProyecto(null)}
+        />
+      )}
     </div>
   )
 }
 
-function ProyectoCard({ proyecto, menuOpen, onMenuToggle, onMenuClose, onAbrir, onEliminar }: {
+function ProyectoCard({ proyecto, puedoCompartir, menuOpen, onMenuToggle, onMenuClose, onAbrir, onCompartir, onEliminar }: {
   proyecto: Proyecto
+  puedoCompartir: boolean
   menuOpen: boolean
   onMenuToggle: () => void
   onMenuClose: () => void
   onAbrir: () => void
+  onCompartir: () => void
   onEliminar: () => void
 }) {
   const colores = COLORES_MAP[proyecto.color] ?? COLORES_MAP.indigo
@@ -127,10 +142,15 @@ function ProyectoCard({ proyecto, menuOpen, onMenuToggle, onMenuClose, onAbrir, 
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={onMenuClose} />
-                <div className="absolute right-0 top-8 z-20 bg-white border border-slate-200 rounded-xl shadow-lg py-1 w-40">
+                <div className="absolute right-0 top-8 z-20 bg-white border border-slate-200 rounded-xl shadow-lg py-1 w-44">
                   <button onClick={() => { onAbrir(); onMenuClose() }} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                     <ExternalLink size={14} /> Abrir
                   </button>
+                  {puedoCompartir && (
+                    <button onClick={onCompartir} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      <Share2 size={14} /> Compartir
+                    </button>
+                  )}
                   <button onClick={() => { onEliminar(); onMenuClose() }} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
                     <Trash2 size={14} /> Eliminar
                   </button>
@@ -226,6 +246,160 @@ function CrearProyectoModal({ empresa, uid, onClose, onCreate }: {
         </div>
       </form>
     </Modal>
+  )
+}
+
+type MiembroInfo = { uid: string; rol: Rol; displayName: string; email: string }
+
+const ROL_LABELS: Record<Rol, string> = { owner: 'Propietario', admin: 'Admin', miembro: 'Miembro', viewer: 'Lector' }
+
+function CompartirProyectoModal({ proyecto, miUid, onClose }: {
+  proyecto: Proyecto
+  miUid: string
+  onClose: () => void
+}) {
+  const [miembros, setMiembros] = useState<MiembroInfo[]>([])
+  const [loadingMiembros, setLoadingMiembros] = useState(true)
+  const [email, setEmail] = useState('')
+  const [rol, setRol] = useState<Rol>('miembro')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  useEffect(() => {
+    async function cargarMiembros() {
+      setLoadingMiembros(true)
+      const entries = Object.entries(proyecto.miembros)
+      const infos = await Promise.all(
+        entries.map(async ([uid, r]) => {
+          const u = await getUsuario(uid)
+          return { uid, rol: r as Rol, displayName: u?.displayName ?? uid, email: u?.email ?? '' }
+        })
+      )
+      setMiembros(infos)
+      setLoadingMiembros(false)
+    }
+    cargarMiembros()
+  }, [proyecto.id])
+
+  const handleAgregar = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
+    const emailLower = email.trim().toLowerCase()
+    if (!emailLower) return
+    setSaving(true)
+    try {
+      const usuario = await buscarUsuarioPorEmail(emailLower) as (UsuarioApp & { id: string }) | null
+      if (!usuario) {
+        setError('No se encontró ningún usuario con ese email. Asegúrate de que ya haya iniciado sesión en la app.')
+        return
+      }
+      const uid = usuario.uid ?? (usuario as unknown as { id: string }).id
+      await agregarMiembroProyecto(proyecto.id, uid, rol, emailLower)
+      setMiembros((prev) => {
+        const exists = prev.find((m) => m.uid === uid)
+        if (exists) return prev.map((m) => m.uid === uid ? { ...m, rol } : m)
+        return [...prev, { uid, rol, displayName: usuario.displayName, email: usuario.email }]
+      })
+      setEmail('')
+      setSuccess(`${usuario.displayName} ahora tiene acceso al proyecto.`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemover = async (uid: string, email: string) => {
+    await removerMiembroProyecto(proyecto.id, uid, email)
+    setMiembros((prev) => prev.filter((m) => m.uid !== uid))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+              <Share2 size={18} className="text-indigo-500" /> Compartir proyecto
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">{proyecto.nombre}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Agregar persona */}
+        <form onSubmit={handleAgregar} className="space-y-3">
+          <label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+            <UserPlus size={14} /> Agregar persona
+          </label>
+          <input
+            type="email"
+            className="input-base"
+            placeholder="email@ejemplo.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <select
+              className="input-base flex-1"
+              value={rol}
+              onChange={(e) => setRol(e.target.value as Rol)}
+            >
+              <option value="miembro">Miembro</option>
+              <option value="viewer">Lector</option>
+            </select>
+            <button type="submit" disabled={saving || !email.trim()} className="btn-primary px-5">
+              {saving ? '...' : 'Agregar'}
+            </button>
+          </div>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          {success && <p className="text-xs text-emerald-600">{success}</p>}
+        </form>
+
+        {/* Lista de miembros actuales */}
+        <div>
+          <p className="text-sm font-medium text-slate-700 mb-2">Acceso actual</p>
+          {loadingMiembros ? (
+            <div className="flex justify-center py-4">
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : (
+            <ul className="space-y-2 max-h-48 overflow-y-auto">
+              {miembros.map((m) => (
+                <li key={m.uid} className="flex items-center gap-3 py-1">
+                  <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-semibold text-indigo-600 flex-shrink-0">
+                    {m.displayName[0]?.toUpperCase() ?? '?'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{m.displayName}</p>
+                    <p className="text-xs text-slate-400 truncate">{m.email}</p>
+                  </div>
+                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                    {ROL_LABELS[m.rol]}
+                  </span>
+                  {m.uid !== miUid && (
+                    <button
+                      onClick={() => handleRemover(m.uid, m.email)}
+                      className="text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+                      title="Quitar acceso"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <p className="text-xs text-slate-400">
+          Los miembros de la empresa ya tienen acceso automático a todos sus proyectos. Aquí puedes compartir este proyecto con personas externas a la empresa.
+        </p>
+      </div>
+    </div>
   )
 }
 

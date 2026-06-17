@@ -17,10 +17,16 @@ export function generarEmailsResumen(tareas: Tarea[], hoy: Date = new Date()): E
   const grupoMap = new Map(tareas.filter(t => t.tipo === 'grupo').map(t => [t.id, t]))
   const nonGrupo = tareas.filter(t => t.tipo !== 'grupo')
 
-  const responsables = [...new Set(nonGrupo.map(t => t.asignadoA).filter(Boolean) as string[])]
+  const responsables = [...new Set(
+    nonGrupo.flatMap(t => t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : []))
+  )]
 
   return responsables.map(responsable => {
-    const mis = nonGrupo.filter(t => t.asignadoA === responsable)
+    const firstWord = responsable.toLowerCase().split(' ')[0]
+    const mis = nonGrupo.filter(t => {
+      const todos = t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])
+      return todos.some(r => r.toLowerCase().split(' ')[0] === firstWord)
+    })
 
     const activasEstaSemana = mis.filter(t => {
       const s = tsToDate(t.fechaInicio)

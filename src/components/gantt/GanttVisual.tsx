@@ -424,8 +424,10 @@ export function GanttVisual({ tareas, onUpdate, onTareaClick, onReparent, onTogg
                       )}
                       <span className="truncate">{tarea.titulo}</span>
                     </p>
-                    {tarea.asignadoA && (
-                      <p className="text-[10px] text-slate-400 truncate">{tarea.asignadoA}</p>
+                    {(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).length > 0 && (
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {(tarea.asignadosA?.length ? tarea.asignadosA : [tarea.asignadoA!]).join(', ')}
+                      </p>
                     )}
                   </div>
                   {isGrupo && tarea.progreso > 0 && (
@@ -581,7 +583,7 @@ export function GanttVisual({ tareas, onUpdate, onTareaClick, onReparent, onTogg
                     style={{ left: x, top: barTop, width: w, height: barH, backgroundColor: color.bg, border: esCritica ? '2px solid #ef4444' : `1.5px solid ${color.border}`, borderRadius: 6, boxShadow: esCritica ? '0 0 0 1px #ef444430' : undefined }}
                     onMouseDown={(e) => { if (!linkMode) startDrag(e, tarea, origBarStart, origBarEnd, 'move') }}
                     onClick={(e) => handleBarClick(e, tarea)}
-                    title={`${tarea.titulo}${tarea.asignadoA ? ' · ' + tarea.asignadoA : ''}`}
+                    title={`${tarea.titulo}${(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).length > 0 ? ' · ' + (tarea.asignadosA?.length ? tarea.asignadosA : [tarea.asignadoA!]).join(', ') : ''}`}
                   >
                     {/* Progress fill — solid estado color */}
                     {tarea.progreso > 0 && (
@@ -593,12 +595,12 @@ export function GanttVisual({ tareas, onUpdate, onTareaClick, onReparent, onTogg
                         <span className="text-[11px] font-semibold truncate leading-tight" style={{ color: textColor }}>
                           {tarea.titulo}
                         </span>
-                        {tarea.asignadoA && w > 90 && (
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold"
+                        {w > 90 && (tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).slice(0, 2).map((r, i) => (
+                          <span key={i} className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold"
                             style={{ backgroundColor: `${color.bar}33`, color: color.bar }}>
-                            {initials(tarea.asignadoA)}
+                            {initials(r)}
                           </span>
-                        )}
+                        ))}
                         {(tarea.dependencias?.length ?? 0) > 0 && w > 70 && (
                           <Link2 size={9} className="flex-shrink-0" style={{ color: color.bar }} />
                         )}

@@ -133,15 +133,19 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
             </div>
           )}
 
-          {/* Responsable */}
-          {tarea.asignadoA && (
+          {/* Responsable(s) */}
+          {(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).length > 0 && (
             <div className="px-5 py-4 border-b border-slate-100">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Responsable</p>
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700">
-                  {tarea.asignadoA.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase()}
-                </div>
-                <span className="text-sm text-slate-700 font-medium">{tarea.asignadoA}</span>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Responsable{(tarea.asignadosA?.length ?? 0) > 1 ? 's' : ''}</p>
+              <div className="space-y-2">
+                {(tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])).map((r, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700 flex-shrink-0">
+                      {r.split(' ').slice(0, 2).map((n) => n[0]).join('').toUpperCase()}
+                    </div>
+                    <span className="text-sm text-slate-700 font-medium">{r}</span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -214,7 +218,7 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
           )}
 
           {/* Sin descripción ni responsable */}
-          {!tarea.descripcion && !tarea.asignadoA && dependencias.length === 0 && (tarea.links ?? []).length === 0 && (
+          {!tarea.descripcion && !(tarea.asignadosA?.length ?? tarea.asignadoA) && dependencias.length === 0 && (tarea.links ?? []).length === 0 && (
             <div className="px-5 py-6 text-center text-slate-400 text-sm">
               <Circle size={24} className="mx-auto mb-2 opacity-30" />
               Agrega descripción, responsable o dependencias editando la tarea.

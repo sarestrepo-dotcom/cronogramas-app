@@ -4,9 +4,9 @@ import { auth } from '@/lib/firebase'
 import { useAuth } from '@/hooks/useAuth'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { getInitials } from '@/lib/utils'
-import { getEmailConfig, guardarEmailConfig, enviarEmailAhora as callEnviarEmail } from '@/lib/firestore'
+import { getEmailConfig, guardarEmailConfig, enviarEmailAhora as callEnviarEmail, previewEmailSemanal } from '@/lib/firestore'
 import { suscribirProyectosPorEmpresa } from '@/lib/firestore'
-import { User, Lock, Bell, Shield, CheckCircle2, Mail, Plus, Trash2, Send, Eye, EyeOff } from 'lucide-react'
+import { User, Lock, Bell, Shield, CheckCircle2, Mail, Plus, Trash2, Send, Eye, EyeOff, X, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { EmailConfig, Proyecto } from '@/types'
 
@@ -61,6 +61,9 @@ function EmailSection() {
   const [sentMsg, setSentMsg] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadingPreview, setLoadingPreview] = useState(false)
+  const [previews, setPreviews] = useState<Array<{nombre: string; email: string; body: string}>>([])
+  const [showPreview, setShowPreview] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -116,6 +119,35 @@ function EmailSection() {
       setSaved(true); setTimeout(() => setSaved(false), 3000)
     } catch { setError('Error al guardar.') }
     finally { setSaving(false) }
+  }
+
+  const handleVistaPrevia = async () => {
+    setLoadingPreview(true); setError('')
+    try {
+      const result = await previewEmailSemanal()
+      if (result.length === 0) {
+        setError('No hay tareas asignadas para los responsables configurados en las fechas actuales.')
+        return
+      }
+      setPreviews(result)
+      setShowPreview(true)
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? 'Error desconocido'
+      setError(`Error al generar vista previa: ${msg}`)
+    } finally { setLoadingPreview(false) }
+  }
+
+  const handleEnviarConCuerpos = async () => {
+    setSending(true); setError('')
+    try {
+      await callEnviarEmail(previews)
+      setSentMsg('¡Emails enviados correctamente!')
+      setShowPreview(false)
+      setTimeout(() => setSentMsg(''), 5000)
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? 'Error desconocido'
+      setError(`Error al enviar: ${msg}`)
+    } finally { setSending(false) }
   }
 
   const handleEnviarAhora = async () => {
@@ -255,19 +287,79 @@ function EmailSection() {
         {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
         {sentMsg && <p className="text-sm text-emerald-600 bg-emerald-50 rounded-xl px-3 py-2">✓ {sentMsg}</p>}
 
-        <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
+        <div className="flex items-center gap-3 pt-2 border-t border-slate-100 flex-wrap">
           <button type="submit" disabled={saving} className="btn-primary">
             {saving ? 'Guardando...' : 'Guardar configuración'}
           </button>
           {saved && <span className="text-sm text-emerald-600 flex items-center gap-1.5"><CheckCircle2 size={14} /> Guardado</span>}
           <div className="flex-1" />
+          <button type="button" onClick={handleVistaPrevia}
+            disabled={loadingPreview || !config.gmailUser || !config.gmailAppPassword || config.responsables.length === 0}
+            className="flex items-center gap-2 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-50">
+            {loadingPreview ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            {loadingPreview ? 'Generando...' : 'Vista previa y editar'}
+          </button>
           <button type="button" onClick={handleEnviarAhora} disabled={sending || !config.gmailUser || !config.gmailAppPassword}
-            className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-50">
+            className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-50">
             <Send size={14} />
-            {sending ? 'Enviando...' : 'Enviar ahora (prueba)'}
+            {sending ? 'Enviando...' : 'Enviar directo'}
           </button>
         </div>
       </form>
+
+      {/* Preview modal */}
+      {showPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowPreview(false)} />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 flex-shrink-0">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                  <Send size={16} className="text-indigo-500" /> Vista previa de emails
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {previews.length} destinatario{previews.length !== 1 ? 's' : ''} · Puedes editar el contenido antes de enviar
+                </p>
+              </div>
+              <button onClick={() => setShowPreview(false)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {previews.map((preview, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                      {preview.nombre.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
+                    </span>
+                    <span className="text-sm font-semibold text-slate-800">{preview.nombre}</span>
+                    <span className="text-xs text-slate-400">{preview.email}</span>
+                  </div>
+                  <textarea
+                    className="w-full h-64 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-mono text-slate-700 resize-none focus:outline-none focus:border-indigo-400"
+                    value={preview.body}
+                    onChange={(e) => {
+                      const updated = [...previews]
+                      updated[i] = { ...preview, body: e.target.value }
+                      setPreviews(updated)
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex-shrink-0">
+              <button onClick={() => setShowPreview(false)} className="btn-secondary">Cancelar</button>
+              <button onClick={handleEnviarConCuerpos} disabled={sending}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50">
+                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {sending ? 'Enviando...' : `Enviar ${previews.length} email${previews.length !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

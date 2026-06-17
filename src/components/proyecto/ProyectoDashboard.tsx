@@ -355,20 +355,21 @@ function EmailModal({ tareas, onClose }: { tareas: Tarea[]; onClose: () => void 
   const emails = useMemo(() => generarEmailsResumen(tareas), [tareas])
   const [selected, setSelected] = useState(emails[0]?.responsable ?? '')
   const [copied, setCopied] = useState(false)
+  const [editedBodies, setEditedBodies] = useState<Record<string, string>>(
+    () => Object.fromEntries(emails.map(e => [e.responsable, e.body]))
+  )
 
-  const current = emails.find(e => e.responsable === selected)
+  const currentBody = editedBodies[selected] ?? ''
 
   const copy = async () => {
-    if (!current) return
-    await navigator.clipboard.writeText(current.body)
+    await navigator.clipboard.writeText(currentBody)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   const openMailto = () => {
-    if (!current) return
-    const subject = encodeURIComponent(`Resumen semanal — ${current.responsable}`)
-    const body = encodeURIComponent(current.body)
+    const subject = encodeURIComponent(`Resumen semanal — ${selected}`)
+    const body = encodeURIComponent(currentBody)
     window.open(`mailto:?subject=${subject}&body=${body}`, '_blank')
   }
 
@@ -380,7 +381,7 @@ function EmailModal({ tareas, onClose }: { tareas: Tarea[]; onClose: () => void 
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Email semanal</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Preview del resumen por responsable</p>
+            <p className="text-xs text-slate-500 mt-0.5">Edita el contenido antes de copiar o enviar</p>
           </div>
           <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg">
             <X size={18} />
@@ -409,11 +410,14 @@ function EmailModal({ tareas, onClose }: { tareas: Tarea[]; onClose: () => void 
               </div>
             </div>
 
-            {/* Email body preview */}
-            <div className="flex-1 overflow-auto p-5">
-              <pre className="text-sm text-slate-700 whitespace-pre-wrap font-mono leading-relaxed bg-slate-50 rounded-xl p-4 border border-slate-200">
-                {current?.body ?? ''}
-              </pre>
+            {/* Editable email body */}
+            <div className="flex-1 min-h-0 p-5">
+              <textarea
+                className="w-full h-full bg-slate-50 rounded-xl p-4 border border-slate-200 text-sm text-slate-700 font-mono leading-relaxed resize-none focus:outline-none focus:border-indigo-400"
+                value={currentBody}
+                onChange={(e) => setEditedBodies(prev => ({ ...prev, [selected]: e.target.value }))}
+                spellCheck={false}
+              />
             </div>
 
             {/* Actions */}
@@ -421,7 +425,7 @@ function EmailModal({ tareas, onClose }: { tareas: Tarea[]; onClose: () => void 
               <button onClick={copy}
                 className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-medium px-4 py-2 rounded-xl transition-colors">
                 {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                {copied ? 'Copiado' : 'Copiar'}
+                {copied ? '¡Copiado!' : 'Copiar'}
               </button>
               <button onClick={openMailto}
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">

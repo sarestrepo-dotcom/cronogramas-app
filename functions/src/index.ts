@@ -17,6 +17,7 @@ interface Tarea {
   fechaInicio: Timestamp
   fechaFin: Timestamp
   asignadoA?: string
+  asignadosA?: string[]
   fase?: string
   parentId?: string
   tipo?: string
@@ -167,28 +168,57 @@ async function procesarConfig(config: EmailConfig, hoy: Date) {
   })
 
   for (const { nombre, email } of config.responsables) {
-    const misTareas = tareas.filter(t => {
-      if (!t.asignadoA) return false
-      const asig = t.asignadoA.toLowerCase()
-      const nom  = nombre.toLowerCase()
-      return asig.includes(nom) || nom.includes(asig.split(' ')[0])
-    })
-
+    const misTareas = tareas.filter(t => esTareaDeResponsable(t, nombre))
     if (misTareas.length === 0) continue
 
     const bodyText = generarEmailParaResponsable(nombre, misTareas, tareas, hoy)
-
-    await transporter.sendMail({
-      from: `"Cronogramas" <${config.gmailUser}>`,
-      to: email,
-      subject: `📋 Resumen semanal — ${nombre}`,
-      text: bodyText,
-      // HTML version with basic formatting
-      html: `<pre style="font-family: sans-serif; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${bodyText}</pre>`,
-    })
-
+    await enviarEmail(transporter, config.gmailUser, email, nombre, bodyText)
     functions.logger.info(`Email enviado a ${email} (${nombre})`)
   }
+}
+
+function esTareaDeResponsable(t: Tarea, nombre: string): boolean {
+  const nom = nombre.toLowerCase()
+  const firstNom = nom.split(' ')[0]
+  const todos = [
+    t.asignadoA,
+    ...(t.asignadosA ?? []),
+  ].filter(Boolean) as string[]
+  return todos.some(a => {
+    const al = a.toLowerCase()
+    return al.includes(firstNom) || firstNom.includes(al.split(' ')[0])
+  })
+}
+
+async function enviarEmail(
+  transporter: ReturnType<typeof nodemailer.createTransport>,
+  from: string, to: string, nombre: string, bodyText: string
+) {
+  await transporter.sendMail({
+    from: `"Cronogramas" <${from}>`,
+    to,
+    subject: `📋 Resumen semanal — ${nombre}`,
+    text: bodyText,
+    html: `<pre style="font-family: sans-serif; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${bodyText}</pre>`,
+  })
+}
+
+async function generarPreviews(config: EmailConfig, hoy: Date): Promise<Array<{nombre: string; email: string; body: string}>> {
+  let tareas: Tarea[] = []
+  if (config.proyectosIds && config.proyectosIds.length > 0) {
+    const chunks = config.proyectosIds.slice(0, 10)
+    const snap = await db.collection('tareas').where('proyectoId', 'in', chunks).get()
+    tareas = snap.docs.map(d => ({ id: d.id, ...d.data() } as Tarea))
+  }
+
+  const result: Array<{nombre: string; email: string; body: string}> = []
+  for (const { nombre, email } of config.responsables) {
+    const misTareas = tareas.filter(t => esTareaDeResponsable(t, nombre))
+    if (misTareas.length === 0) continue
+    const body = generarEmailParaResponsable(nombre, misTareas, tareas, hoy)
+    result.push({ nombre, email, body })
+  }
+  return result
 }
 
 // ─── Groq API helper (free, OpenAI-compatible) ───────────────────────────────
@@ -331,12 +361,28 @@ export const emailSemanalAuto = functions.scheduler.onSchedule(
   }
 )
 
+// ─── Callable: preview email content without sending ─────────────────────────
+
+export const previewEmailSemanal = functionsV1
+  .region('us-central1')
+  .https
+  .onCall(async (_data: unknown, context: functionsV1.https.CallableContext) => {
+    if (!context.auth) throw new functionsV1.https.HttpsError('unauthenticated', 'Requiere autenticación')
+    const configSnap = await db.collection('email_config').doc(context.auth.uid).get()
+    if (!configSnap.exists) throw new functionsV1.https.HttpsError('not-found', 'Sin configuración de email')
+    const config = configSnap.data() as EmailConfig
+    const previews = await generarPreviews(config, new Date())
+    return { previews }
+  })
+
 // ─── Callable: manual trigger from the app (test / enviar ahora) ─────────────
+
+interface CustomBody { nombre: string; email: string; body: string }
 
 export const enviarEmailAhora = functionsV1
   .region('us-central1')
   .https
-  .onCall(async (_data: unknown, context: functionsV1.https.CallableContext) => {
+  .onCall(async (data: { customBodies?: CustomBody[] }, context: functionsV1.https.CallableContext) => {
     if (!context.auth) {
       throw new functionsV1.https.HttpsError('unauthenticated', 'Requiere autenticación')
     }
@@ -346,6 +392,22 @@ export const enviarEmailAhora = functionsV1
       throw new functionsV1.https.HttpsError('not-found', 'Sin configuración de email')
     }
     const config = configSnap.data() as EmailConfig
-    await procesarConfig(config, new Date())
+    if (!config.gmailUser || !config.gmailAppPassword) {
+      throw new functionsV1.https.HttpsError('failed-precondition', 'Faltan credenciales de email')
+    }
+
+    if (data?.customBodies?.length) {
+      // Send pre-generated (possibly edited) bodies
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: config.gmailUser, pass: config.gmailAppPassword },
+      })
+      for (const { nombre, email, body } of data.customBodies) {
+        await enviarEmail(transporter, config.gmailUser, email, nombre, body)
+        functions.logger.info(`Email (custom) enviado a ${email} (${nombre})`)
+      }
+    } else {
+      await procesarConfig(config, new Date())
+    }
     return { ok: true, message: 'Emails enviados correctamente' }
   })

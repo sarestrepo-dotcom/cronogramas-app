@@ -64,3 +64,9 @@ export function getInitials(name: string): string {
     .join('')
     .toUpperCase()
 }
+
+export function getResponsables(tarea: { asignadoA?: string; asignadosA?: string[] }): string[] {
+  if (tarea.asignadosA?.length) return tarea.asignadosA
+  if (tarea.asignadoA) return [tarea.asignadoA]
+  return []
+}
