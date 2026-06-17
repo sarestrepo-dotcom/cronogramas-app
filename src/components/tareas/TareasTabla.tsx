@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { Timestamp } from 'firebase/firestore'
-import { Plus, Trash2, Check, X } from 'lucide-react'
+import { Plus, Trash2, Check, X, GripVertical } from 'lucide-react'
 import { crearTarea, actualizarTarea, eliminarTarea } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { cn, ESTADO_COLORS, ESTADO_LABELS, tsToDate } from '@/lib/utils'
@@ -45,6 +45,9 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
   const [guardando, setGuardando] = useState(false)
   const [depEditingId, setDepEditingId] = useState<string | null>(null)
   const [cascadeMsg, setCascadeMsg] = useState('')
+  const [mostrarFechaInicio, setMostrarFechaInicio] = useState(true)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [respEditingId, setRespEditingId] = useState<string | null>(null)
@@ -72,6 +75,14 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
 
   const fasesExistentes = useMemo(
     () => [...new Set(tareas.map((t) => t.fase).filter(Boolean) as string[])].sort(),
+    [tareas],
+  )
+
+  const responsablesExistentes = useMemo(
+    () =>
+      [...new Set(
+        tareas.flatMap((t) => (t.asignadosA?.length ? t.asignadosA : t.asignadoA ? [t.asignadoA] : [])),
+      )].sort(),
     [tareas],
   )
 
@@ -159,6 +170,20 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
     if (e.key === 'Escape') cancelEdit()
   }
 
+  const handleDrop = async (targetId: string) => {
+    if (!dragId || dragId === targetId) { setDragId(null); setDragOverId(null); return }
+    const tareaRows = rows.filter((r): r is Extract<typeof r, { kind: 'tarea' }> => r.kind === 'tarea').map((r) => r.tarea)
+    const fromIdx = tareaRows.findIndex((t) => t.id === dragId)
+    const toIdx = tareaRows.findIndex((t) => t.id === targetId)
+    if (fromIdx === -1 || toIdx === -1) return
+    const reordered = [...tareaRows]
+    const [moved] = reordered.splice(fromIdx, 1)
+    reordered.splice(toIdx, 0, moved)
+    await Promise.all(reordered.map((t, i) => actualizarTarea(t.id, { orden: (i + 1) * 1000 })))
+    setDragId(null)
+    setDragOverId(null)
+  }
+
   const handleGuardarFila = async () => {
     const fi = parseDate(fila.fechaInicio, 'T00:00:00')
     const ff = parseDate(fila.fechaFin, 'T23:59:59')
@@ -193,11 +218,23 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
       <table className="w-full text-sm border-separate border-spacing-0">
         <thead>
           <tr>
-            {['Tarea', 'Fase', 'Fecha inicio', 'Fecha fin', 'Estado', 'Prioridad', 'Responsable(s)', 'Depende de', 'Progreso', 'Notas', 'Entregables', ''].map((h) => (
-              <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200 bg-slate-50 first:rounded-tl-xl last:rounded-tr-xl">
+            <th className="w-6 border-b border-slate-200 bg-slate-50 rounded-tl-xl" />
+            {(['Tarea', 'Responsable(s)', 'Fase'] as const).map((h) => (
+              <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200 bg-slate-50">
                 {h}
               </th>
             ))}
+            {mostrarFechaInicio && (
+              <th className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200 bg-slate-50 whitespace-nowrap">
+                Fecha inicio
+              </th>
+            )}
+            {(['Fecha fin', 'Estado', 'Prioridad', 'Depende de', 'Progreso', 'Notas', 'Entregables'] as const).map((h) => (
+              <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200 bg-slate-50">
+                {h}
+              </th>
+            ))}
+            <th className="border-b border-slate-200 bg-slate-50 rounded-tr-xl" />
           </tr>
         </thead>
         <tbody>
@@ -206,7 +243,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
             if (row.kind === 'fase_header') {
               return (
                 <tr key={`fase-${row.label}`}>
-                  <td colSpan={12} className="px-3 py-2 border-b border-indigo-100 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wider">
+                  <td colSpan={mostrarFechaInicio ? 13 : 12} className="px-3 py-2 border-b border-indigo-100 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wider">
                     {row.label}
                   </td>
                 </tr>
@@ -220,7 +257,29 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
             const derivedOnly = isGrupo
 
             return (
-              <tr key={tarea.id} className={cn('group hover:bg-indigo-50/40 transition-colors', rowBg)}>
+              <tr
+                key={tarea.id}
+                onDragOver={(e) => { e.preventDefault(); setDragOverId(tarea.id) }}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null) }}
+                onDrop={() => handleDrop(tarea.id)}
+                className={cn(
+                  'group hover:bg-indigo-50/40 transition-colors',
+                  rowBg,
+                  dragId === tarea.id && 'opacity-40',
+                  dragOverId === tarea.id && dragId !== tarea.id && 'border-t-2 border-indigo-400',
+                )}
+              >
+                {/* Drag handle */}
+                <td className="px-1 py-2 border-b border-slate-100 w-6">
+                  <div
+                    draggable
+                    onDragStart={() => setDragId(tarea.id)}
+                    onDragEnd={() => { setDragId(null); setDragOverId(null) }}
+                    className="cursor-grab active:cursor-grabbing text-slate-200 hover:text-slate-400 flex items-center justify-center"
+                  >
+                    <GripVertical size={13} />
+                  </div>
+                </td>
                 {/* Título */}
                 <td className="px-3 py-2 border-b border-slate-100 min-w-48 max-w-72">
                   <div style={{ paddingLeft: nivel * 20 }} className="flex items-center gap-1.5">
@@ -252,6 +311,57 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   </div>
                 </td>
 
+                {/* Responsable(s) — multi-person (después del título) */}
+                <td className="px-3 py-2 border-b border-slate-100">
+                  <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-wrap gap-1 items-center min-w-[100px]">
+                      {getResponsables(tarea).map((r, i) => (
+                        <span key={i} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[10px] font-medium px-1.5 py-0.5 rounded-full">
+                          <span className="w-3.5 h-3.5 rounded-full bg-indigo-200 text-indigo-700 text-[8px] font-bold flex items-center justify-center flex-shrink-0">
+                            {r.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
+                          </span>
+                          <span className="max-w-[60px] truncate">{r.split(' ')[0]}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); updateResponsables(tarea, getResponsables(tarea).filter((_, j) => j !== i)) }}
+                            className="text-indigo-400 hover:text-indigo-700 ml-0.5"
+                          >×</button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={() => setRespEditingId(respEditingId === tarea.id ? null : tarea.id)}
+                        className="text-slate-300 hover:text-indigo-500 text-xs transition-colors leading-none"
+                        title="Agregar responsable"
+                      >+</button>
+                    </div>
+                    {respEditingId === tarea.id && (
+                      <div className="absolute z-50 top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-44" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          list="resp-datalist"
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-400"
+                          placeholder="Nombre del responsable..."
+                          value={respInput}
+                          onChange={(e) => setRespInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && respInput.trim()) {
+                              updateResponsables(tarea, [...getResponsables(tarea), respInput.trim()])
+                              setRespInput('')
+                              setRespEditingId(null)
+                            }
+                            if (e.key === 'Escape') { setRespEditingId(null); setRespInput('') }
+                          }}
+                        />
+                        <datalist id="resp-datalist">
+                          {responsablesExistentes
+                            .filter((r) => !getResponsables(tarea).includes(r))
+                            .map((r) => <option key={r} value={r} />)}
+                        </datalist>
+                        <p className="text-[10px] text-slate-400 mt-1 px-1">Enter para agregar · Esc para cerrar</p>
+                      </div>
+                    )}
+                  </div>
+                </td>
+
                 {/* Fase */}
                 <td className="px-3 py-2 border-b border-slate-100 max-w-[120px]">
                   {tarea.fase ? (
@@ -261,20 +371,22 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   ) : <span className="text-slate-300">—</span>}
                 </td>
 
-                {/* Fecha inicio */}
-                <td className="px-3 py-2 border-b border-slate-100 whitespace-nowrap">
-                  {editingCell?.id === tarea.id && editingCell.field === 'fechaInicio' ? (
-                    <input ref={inputRef as React.RefObject<HTMLInputElement>} type="date"
-                      className="bg-white border border-indigo-400 rounded-lg px-2 py-1 text-sm focus:outline-none"
-                      value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={() => commitEdit(tarea)} onKeyDown={(e) => handleKeyDown(e, tarea)} />
-                  ) : (
-                    <span onClick={() => startEdit(tarea.id, 'fechaInicio', safeIso(tarea.fechaInicio))}
-                      className="cursor-text text-slate-600 hover:text-indigo-600">
-                      {tsToDate(tarea.fechaInicio).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
-                    </span>
-                  )}
-                </td>
+                {/* Fecha inicio — opcional */}
+                {mostrarFechaInicio && (
+                  <td className="px-3 py-2 border-b border-slate-100 whitespace-nowrap">
+                    {editingCell?.id === tarea.id && editingCell.field === 'fechaInicio' ? (
+                      <input ref={inputRef as React.RefObject<HTMLInputElement>} type="date"
+                        className="bg-white border border-indigo-400 rounded-lg px-2 py-1 text-sm focus:outline-none"
+                        value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={() => commitEdit(tarea)} onKeyDown={(e) => handleKeyDown(e, tarea)} />
+                    ) : (
+                      <span onClick={() => startEdit(tarea.id, 'fechaInicio', safeIso(tarea.fechaInicio))}
+                        className="cursor-text text-slate-600 hover:text-indigo-600">
+                        {tsToDate(tarea.fechaInicio).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
+                      </span>
+                    )}
+                  </td>
+                )}
 
                 {/* Fecha fin */}
                 <td className="px-3 py-2 border-b border-slate-100 whitespace-nowrap">
@@ -324,51 +436,6 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                       {tarea.prioridad}
                     </span>
                   )}
-                </td>
-
-                {/* Responsable(s) — multi-person */}
-                <td className="px-3 py-2 border-b border-slate-100">
-                  <div className="relative" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex flex-wrap gap-1 items-center min-w-[100px]">
-                      {getResponsables(tarea).map((r, i) => (
-                        <span key={i} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 text-[10px] font-medium px-1.5 py-0.5 rounded-full">
-                          <span className="w-3.5 h-3.5 rounded-full bg-indigo-200 text-indigo-700 text-[8px] font-bold flex items-center justify-center flex-shrink-0">
-                            {r.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
-                          </span>
-                          <span className="max-w-[60px] truncate">{r.split(' ')[0]}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); updateResponsables(tarea, getResponsables(tarea).filter((_, j) => j !== i)) }}
-                            className="text-indigo-400 hover:text-indigo-700 ml-0.5"
-                          >×</button>
-                        </span>
-                      ))}
-                      <button
-                        onClick={() => setRespEditingId(respEditingId === tarea.id ? null : tarea.id)}
-                        className="text-slate-300 hover:text-indigo-500 text-xs transition-colors leading-none"
-                        title="Agregar responsable"
-                      >+</button>
-                    </div>
-                    {respEditingId === tarea.id && (
-                      <div className="absolute z-50 top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl p-2 min-w-44" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          autoFocus
-                          className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-400"
-                          placeholder="Nombre del responsable..."
-                          value={respInput}
-                          onChange={(e) => setRespInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && respInput.trim()) {
-                              updateResponsables(tarea, [...getResponsables(tarea), respInput.trim()])
-                              setRespInput('')
-                              setRespEditingId(null)
-                            }
-                            if (e.key === 'Escape') { setRespEditingId(null); setRespInput('') }
-                          }}
-                        />
-                        <p className="text-[10px] text-slate-400 mt-1 px-1">Enter para agregar · Esc para cerrar</p>
-                      </div>
-                    )}
-                  </div>
                 </td>
 
                 {/* Depende de */}
@@ -514,15 +581,27 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
             )
           })}
 
-          {/* Fila nueva */}
+          {/* Fila nueva — mismo orden que headers */}
           {mostrarFila && (
             <tr className="bg-indigo-50/60">
+              <td className="w-6" />
+              {/* Tarea */}
               <td className="px-3 py-2">
                 <input autoFocus className="w-full bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
                   placeholder="Nombre de la tarea..." value={fila.titulo}
                   onChange={(e) => setFila({ ...fila, titulo: e.target.value })}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleGuardarFila() }} />
               </td>
+              {/* Responsable */}
+              <td className="px-3 py-2">
+                <input className="w-full bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                  list="fila-resp-datalist" placeholder="Responsable..." value={fila.responsable}
+                  onChange={(e) => setFila({ ...fila, responsable: e.target.value })} />
+                <datalist id="fila-resp-datalist">
+                  {responsablesExistentes.map((r) => <option key={r} value={r} />)}
+                </datalist>
+              </td>
+              {/* Fase */}
               <td className="px-3 py-2">
                 <input className="w-full bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
                   list="fases-datalist" placeholder="Fase..." value={fila.fase}
@@ -531,30 +610,31 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   {fasesExistentes.map((f) => <option key={f} value={f} />)}
                 </datalist>
               </td>
-              <td className="px-3 py-2">
-                <input type="date" className="bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
-                  value={fila.fechaInicio} onChange={(e) => setFila({ ...fila, fechaInicio: e.target.value })} />
-              </td>
+              {/* Fecha inicio — opcional */}
+              {mostrarFechaInicio && (
+                <td className="px-3 py-2">
+                  <input type="date" className="bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                    value={fila.fechaInicio} onChange={(e) => setFila({ ...fila, fechaInicio: e.target.value })} />
+                </td>
+              )}
+              {/* Fecha fin */}
               <td className="px-3 py-2">
                 <input type="date" className="bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
                   value={fila.fechaFin} min={fila.fechaInicio} onChange={(e) => setFila({ ...fila, fechaFin: e.target.value })} />
               </td>
+              {/* Estado */}
               <td className="px-3 py-2">
                 <select className="bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
                   value={fila.estado} onChange={(e) => setFila({ ...fila, estado: e.target.value as EstadoTarea })}>
                   {ESTADOS.map((e) => <option key={e} value={e}>{ESTADO_LABELS[e]}</option>)}
                 </select>
               </td>
+              {/* Prioridad */}
               <td className="px-3 py-2">
                 <select className="bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
                   value={fila.prioridad} onChange={(e) => setFila({ ...fila, prioridad: e.target.value as Tarea['prioridad'] })}>
                   {PRIORIDADES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
-              </td>
-              <td className="px-3 py-2">
-                <input className="w-full bg-white border border-indigo-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
-                  placeholder="Responsable..." value={fila.responsable}
-                  onChange={(e) => setFila({ ...fila, responsable: e.target.value })} />
               </td>
               <td className="px-3 py-2 text-xs text-slate-400">—</td>
               <td className="px-3 py-2 text-xs text-slate-400">0%</td>
@@ -589,11 +669,20 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
           Haz clic en cualquier celda para editarla · Enter para confirmar · Esc para cancelar
         </p>
       )}
-      {cascadeMsg && (
-        <span className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl animate-pulse">
-          {cascadeMsg}
-        </span>
-      )}
+      <div className="flex items-center gap-3">
+        {cascadeMsg && (
+          <span className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl animate-pulse">
+            {cascadeMsg}
+          </span>
+        )}
+        <button
+          onClick={() => setMostrarFechaInicio((v) => !v)}
+          className="text-xs text-slate-400 hover:text-slate-600 transition-colors border border-slate-200 rounded-lg px-2 py-1"
+          title={mostrarFechaInicio ? 'Ocultar fecha inicio' : 'Mostrar fecha inicio'}
+        >
+          {mostrarFechaInicio ? '⊖ f.inicio' : '⊕ f.inicio'}
+        </button>
+      </div>
     </div>
     </div>
   )
