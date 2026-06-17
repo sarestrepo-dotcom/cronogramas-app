@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom'
-import { Plus, FolderKanban, Calendar, MoreVertical, Trash2, ExternalLink, Users, Share2, UserPlus, X } from 'lucide-react'
+import { Plus, FolderKanban, Calendar, MoreVertical, Trash2, ExternalLink, Users, Share2, UserPlus, X, Pencil } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import { useProyectos } from '@/hooks/useProyectos'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useAuth } from '@/hooks/useAuth'
-import { crearProyecto, eliminarProyecto, agregarMiembroProyecto, removerMiembroProyecto, buscarUsuarioPorEmail, getUsuario } from '@/lib/firestore'
+import { crearProyecto, actualizarProyecto, eliminarProyecto, agregarMiembroProyecto, removerMiembroProyecto, buscarUsuarioPorEmail, getUsuario } from '@/lib/firestore'
 import { cn, formatFecha } from '@/lib/utils'
 import type { Empresa, Proyecto, Rol, UsuarioApp } from '@/types'
 import { COLORES_EMPRESAS as COLORES_MAP } from '@/types'
@@ -28,6 +28,7 @@ export function ProyectosPage() {
   const navigate = useNavigate()
 
   const [showModal, setShowModal] = useState(false)
+  const [editingProyecto, setEditingProyecto] = useState<Proyecto | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [compartirProyecto, setCompartirProyecto] = useState<Proyecto | null>(null)
 
@@ -79,11 +80,13 @@ export function ProyectosPage() {
               key={proyecto.id}
               proyecto={proyecto}
               puedoCompartir={puedoCompartir}
+              puedoEditar={puedoCompartir}
               menuOpen={menuOpen === proyecto.id}
               onMenuToggle={() => setMenuOpen(menuOpen === proyecto.id ? null : proyecto.id)}
               onMenuClose={() => setMenuOpen(null)}
               onAbrir={() => navigate(`/empresa/${empresaId}/proyecto/${proyecto.id}`)}
               onCompartir={() => { setCompartirProyecto(proyecto); setMenuOpen(null) }}
+              onEditar={() => { setEditingProyecto(proyecto); setMenuOpen(null) }}
               onEliminar={async () => { if (confirm('¿Eliminar proyecto?')) await eliminarProyecto(proyecto.id) }}
             />
           ))}
@@ -91,11 +94,21 @@ export function ProyectosPage() {
       )}
 
       {showModal && empresa && (
-        <CrearProyectoModal
+        <ProyectoModal
           empresa={empresa}
           uid={user!.uid}
           onClose={() => setShowModal(false)}
           onCreate={(id) => { setShowModal(false); navigate(`/empresa/${empresaId}/proyecto/${id}`) }}
+        />
+      )}
+
+      {editingProyecto && empresa && (
+        <ProyectoModal
+          empresa={empresa}
+          uid={user!.uid}
+          proyecto={editingProyecto}
+          onClose={() => setEditingProyecto(null)}
+          onSave={() => setEditingProyecto(null)}
         />
       )}
 
@@ -110,14 +123,16 @@ export function ProyectosPage() {
   )
 }
 
-function ProyectoCard({ proyecto, puedoCompartir, menuOpen, onMenuToggle, onMenuClose, onAbrir, onCompartir, onEliminar }: {
+function ProyectoCard({ proyecto, puedoCompartir, puedoEditar, menuOpen, onMenuToggle, onMenuClose, onAbrir, onCompartir, onEditar, onEliminar }: {
   proyecto: Proyecto
   puedoCompartir: boolean
+  puedoEditar: boolean
   menuOpen: boolean
   onMenuToggle: () => void
   onMenuClose: () => void
   onAbrir: () => void
   onCompartir: () => void
+  onEditar: () => void
   onEliminar: () => void
 }) {
   const colores = COLORES_MAP[proyecto.color] ?? COLORES_MAP.indigo
@@ -146,6 +161,11 @@ function ProyectoCard({ proyecto, puedoCompartir, menuOpen, onMenuToggle, onMenu
                   <button onClick={() => { onAbrir(); onMenuClose() }} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                     <ExternalLink size={14} /> Abrir
                   </button>
+                  {puedoEditar && (
+                    <button onClick={onEditar} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      <Pencil size={14} /> Editar
+                    </button>
+                  )}
                   {puedoCompartir && (
                     <button onClick={onCompartir} className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
                       <Share2 size={14} /> Compartir
@@ -161,6 +181,11 @@ function ProyectoCard({ proyecto, puedoCompartir, menuOpen, onMenuToggle, onMenu
         </div>
 
         <h3 className="font-semibold text-slate-900 mb-1">{proyecto.nombre}</h3>
+        {proyecto.objetivo && (
+          <p className="text-xs font-medium text-indigo-600 italic mb-1 line-clamp-1">
+            🎯 {proyecto.objetivo}
+          </p>
+        )}
         {proyecto.descripcion && <p className="text-slate-500 text-sm mb-3 line-clamp-2">{proyecto.descripcion}</p>}
 
         <div className="space-y-2 text-xs text-slate-500">
@@ -178,50 +203,74 @@ function ProyectoCard({ proyecto, puedoCompartir, menuOpen, onMenuToggle, onMenu
   )
 }
 
-function CrearProyectoModal({ empresa, uid, onClose, onCreate }: {
+function ProyectoModal({ empresa, uid, proyecto, onClose, onCreate, onSave }: {
   empresa: Empresa
   uid: string
+  proyecto?: Proyecto
   onClose: () => void
-  onCreate: (id: string) => void
+  onCreate?: (id: string) => void
+  onSave?: () => void
 }) {
+  const isEdit = !!proyecto
   const today = new Date().toISOString().split('T')[0]
-  const [nombre, setNombre] = useState('')
-  const [descripcion, setDescripcion] = useState('')
-  const [color, setColor] = useState(empresa.color ?? 'indigo')
-  const [fechaInicio, setFechaInicio] = useState(today)
-  const [fechaFin, setFechaFin] = useState('')
+
+  const tsToStr = (ts: Timestamp | undefined, def: string) =>
+    ts ? ts.toDate().toISOString().split('T')[0] : def
+
+  const [nombre, setNombre] = useState(proyecto?.nombre ?? '')
+  const [objetivo, setObjetivo] = useState(proyecto?.objetivo ?? '')
+  const [descripcion, setDescripcion] = useState(proyecto?.descripcion ?? '')
+  const [color, setColor] = useState(proyecto?.color ?? empresa.color ?? 'indigo')
+  const [estado, setEstado] = useState<Proyecto['estado']>(proyecto?.estado ?? 'activo')
+  const [fechaInicio, setFechaInicio] = useState(tsToStr(proyecto?.fechaInicio, today))
+  const [fechaFin, setFechaFin] = useState(tsToStr(proyecto?.fechaFin, ''))
   const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nombre.trim() || !fechaFin) return
+    const fiDate = new Date(fechaInicio + 'T00:00:00')
+    const ffDate = new Date(fechaFin + 'T23:59:59')
+    if (isNaN(fiDate.getTime()) || isNaN(ffDate.getTime())) return
     setSaving(true)
     try {
-      const id = await crearProyecto({
-        empresaId: empresa.id,
+      const data = {
         nombre: nombre.trim(),
-        descripcion: descripcion.trim(),
+        objetivo: objetivo.trim() || undefined,
+        descripcion: descripcion.trim() || undefined,
         color,
-        estado: 'activo',
-        fechaInicio: Timestamp.fromDate(new Date(fechaInicio + 'T00:00:00')),
-        fechaFin: Timestamp.fromDate(new Date(fechaFin + 'T23:59:59')),
-        creadoPor: uid,
-        miembros: { [uid]: 'owner' },
-      } as Omit<Proyecto, 'id' | 'creadoEn'>)
-      onCreate(id)
+        estado,
+        fechaInicio: Timestamp.fromDate(fiDate),
+        fechaFin: Timestamp.fromDate(ffDate),
+      }
+      if (isEdit && proyecto) {
+        await actualizarProyecto(proyecto.id, data)
+        onSave?.()
+      } else {
+        const id = await crearProyecto({
+          ...data,
+          empresaId: empresa.id,
+          creadoPor: uid,
+          miembros: { [uid]: 'owner' },
+        } as Omit<Proyecto, 'id' | 'creadoEn'>)
+        onCreate?.(id)
+      }
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <Modal title="Nuevo proyecto" onClose={onClose}>
+    <Modal title={isEdit ? 'Editar proyecto' : 'Nuevo proyecto'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <FormField label="Nombre del proyecto">
           <input className="input-base" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Rediseño web" required />
         </FormField>
+        <FormField label="Objetivo (¿qué se quiere lograr?)">
+          <input className="input-base" value={objetivo} onChange={(e) => setObjetivo(e.target.value)} placeholder="Ej: Aumentar conversión un 20% antes de Q3" />
+        </FormField>
         <FormField label="Descripción (opcional)">
-          <textarea className="input-base resize-none" rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="¿De qué trata el proyecto?" />
+          <textarea className="input-base resize-none" rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Contexto, alcance, notas generales…" />
         </FormField>
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Fecha inicio">
@@ -231,6 +280,16 @@ function CrearProyectoModal({ empresa, uid, onClose, onCreate }: {
             <input className="input-base" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} min={fechaInicio} required />
           </FormField>
         </div>
+        {isEdit && (
+          <FormField label="Estado">
+            <select className="input-base" value={estado} onChange={(e) => setEstado(e.target.value as Proyecto['estado'])}>
+              <option value="activo">Activo</option>
+              <option value="pausado">Pausado</option>
+              <option value="completado">Completado</option>
+              <option value="archivado">Archivado</option>
+            </select>
+          </FormField>
+        )}
         <FormField label="Color">
           <div className="flex flex-wrap gap-2">
             {COLORES_PROYECTO.map((c) => (
@@ -242,7 +301,9 @@ function CrearProyectoModal({ empresa, uid, onClose, onCreate }: {
         </FormField>
         <div className="flex justify-end gap-3 pt-2">
           <button type="button" onClick={onClose} className="btn-secondary">Cancelar</button>
-          <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Guardando...' : 'Crear proyecto'}</button>
+          <button type="submit" disabled={saving} className="btn-primary">
+            {saving ? 'Guardando...' : isEdit ? 'Guardar cambios' : 'Crear proyecto'}
+          </button>
         </div>
       </form>
     </Modal>

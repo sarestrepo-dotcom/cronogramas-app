@@ -21,6 +21,7 @@ export interface Proyecto {
   id: string
   empresaId: string
   nombre: string
+  objetivo?: string
   descripcion?: string
   fechaInicio: Timestamp
   fechaFin: Timestamp
