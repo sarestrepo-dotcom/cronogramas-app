@@ -141,10 +141,10 @@ function ProyectoCard({ proyecto, puedoCompartir, puedoEditar, menuOpen, onMenuT
 
   return (
     <div
-      className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer overflow-hidden"
+      className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
       onClick={onAbrir}
     >
-      <div className={cn('h-1.5', colores.bg)} />
+      <div className={cn('h-1.5 rounded-t-2xl', colores.bg)} />
       <div className="p-5">
         <div className="flex items-start justify-between mb-3">
           <div className={cn('px-2.5 py-1 rounded-full text-xs font-medium', estado.bg, estado.text)}>
