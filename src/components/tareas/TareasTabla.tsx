@@ -147,6 +147,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
     else if (field === 'estado') update = { estado: editValue as EstadoTarea }
     else if (field === 'progreso') update = { progreso: Math.min(100, Math.max(0, Number(editValue))) }
     else if (field === 'responsable') update = { asignadoA: editValue.trim() || undefined }
+    else if (field === 'fase') update = { fase: editValue.trim() || undefined }
     else if (field === 'notas') update = { notas: editValue.trim() || undefined }
     else if (field === 'entregables') update = { entregables: editValue.trim() || undefined }
     await actualizarTarea(tarea.id, update)
@@ -362,13 +363,36 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   </div>
                 </td>
 
-                {/* Fase */}
-                <td className="px-3 py-2 border-b border-slate-100 max-w-[120px]">
-                  {tarea.fase ? (
-                    <span className="text-xs text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-md font-medium truncate block">
+                {/* Fase — editable inline */}
+                <td className="px-3 py-2 border-b border-slate-100 max-w-[140px]">
+                  {editingCell?.id === tarea.id && editingCell.field === 'fase' ? (
+                    <>
+                      <input
+                        ref={inputRef as React.RefObject<HTMLInputElement>}
+                        list="fases-datalist"
+                        className="w-full bg-white border border-indigo-400 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                        value={editValue}
+                        placeholder="Fase o vacío…"
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={() => commitEdit(tarea)}
+                        onKeyDown={(e) => handleKeyDown(e, tarea)}
+                      />
+                    </>
+                  ) : tarea.fase ? (
+                    <span
+                      onClick={() => startEdit(tarea.id, 'fase', tarea.fase ?? '')}
+                      className="cursor-pointer text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded-md font-medium truncate block transition-colors"
+                    >
                       {tarea.fase}
                     </span>
-                  ) : <span className="text-slate-300">—</span>}
+                  ) : (
+                    <span
+                      onClick={() => startEdit(tarea.id, 'fase', '')}
+                      className="cursor-pointer text-slate-300 hover:text-indigo-400 text-xs transition-colors"
+                    >
+                      + fase
+                    </span>
+                  )}
                 </td>
 
                 {/* Fecha inicio — opcional */}
