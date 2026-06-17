@@ -52,6 +52,8 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
   const scrollRef = useRef<HTMLDivElement>(null)
   const [respEditingId, setRespEditingId] = useState<string | null>(null)
   const [respInput, setRespInput] = useState('')
+  const [faseEditingId, setFaseEditingId] = useState<string | null>(null)
+  const [faseNueva, setFaseNueva] = useState('')
 
   useEffect(() => {
     if (mostrarFila && scrollRef.current) {
@@ -72,6 +74,13 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [respEditingId])
+
+  useEffect(() => {
+    if (!faseEditingId) return
+    const close = () => { setFaseEditingId(null); setFaseNueva('') }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [faseEditingId])
 
   const fasesExistentes = useMemo(
     () => [...new Set(tareas.map((t) => t.fase).filter(Boolean) as string[])].sort(),
@@ -105,6 +114,12 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
 
   const getResponsables = (tarea: Tarea): string[] =>
     tarea.asignadosA?.length ? tarea.asignadosA : (tarea.asignadoA ? [tarea.asignadoA] : [])
+
+  const saveFase = async (tarea: Tarea, fase: string | undefined) => {
+    await actualizarTarea(tarea.id, { fase })
+    setFaseEditingId(null)
+    setFaseNueva('')
+  }
 
   const updateResponsables = async (tarea: Tarea, newList: string[]) => {
     await actualizarTarea(tarea.id, {
@@ -147,7 +162,6 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
     else if (field === 'estado') update = { estado: editValue as EstadoTarea }
     else if (field === 'progreso') update = { progreso: Math.min(100, Math.max(0, Number(editValue))) }
     else if (field === 'responsable') update = { asignadoA: editValue.trim() || undefined }
-    else if (field === 'fase') update = { fase: editValue.trim() || undefined }
     else if (field === 'notas') update = { notas: editValue.trim() || undefined }
     else if (field === 'entregables') update = { entregables: editValue.trim() || undefined }
     await actualizarTarea(tarea.id, update)
@@ -363,36 +377,77 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   </div>
                 </td>
 
-                {/* Fase — editable inline */}
+                {/* Fase — popover con fases existentes + nueva */}
                 <td className="px-3 py-2 border-b border-slate-100 max-w-[140px]">
-                  {editingCell?.id === tarea.id && editingCell.field === 'fase' ? (
-                    <>
-                      <input
-                        ref={inputRef as React.RefObject<HTMLInputElement>}
-                        list="fases-datalist"
-                        className="w-full bg-white border border-indigo-400 rounded-lg px-2 py-1 text-xs focus:outline-none"
-                        value={editValue}
-                        placeholder="Fase o vacío…"
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onBlur={() => commitEdit(tarea)}
-                        onKeyDown={(e) => handleKeyDown(e, tarea)}
-                      />
-                    </>
-                  ) : tarea.fase ? (
-                    <span
-                      onClick={() => startEdit(tarea.id, 'fase', tarea.fase ?? '')}
-                      className="cursor-pointer text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded-md font-medium truncate block transition-colors"
-                    >
-                      {tarea.fase}
-                    </span>
-                  ) : (
-                    <span
-                      onClick={() => startEdit(tarea.id, 'fase', '')}
-                      className="cursor-pointer text-slate-300 hover:text-indigo-400 text-xs transition-colors"
-                    >
-                      + fase
-                    </span>
-                  )}
+                  <div className="relative" onClick={(e) => e.stopPropagation()}>
+                    {tarea.fase ? (
+                      <span
+                        onClick={() => { setFaseEditingId(faseEditingId === tarea.id ? null : tarea.id); setFaseNueva('') }}
+                        className="cursor-pointer text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-1.5 py-0.5 rounded-md font-medium truncate block transition-colors"
+                      >
+                        {tarea.fase}
+                      </span>
+                    ) : (
+                      <span
+                        onClick={() => { setFaseEditingId(faseEditingId === tarea.id ? null : tarea.id); setFaseNueva('') }}
+                        className="cursor-pointer text-slate-300 hover:text-indigo-400 text-xs transition-colors"
+                      >
+                        + fase
+                      </span>
+                    )}
+                    {faseEditingId === tarea.id && (
+                      <div className="absolute z-50 top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden min-w-44" onClick={(e) => e.stopPropagation()}>
+                        {fasesExistentes.length > 0 && (
+                          <div className="py-1 max-h-40 overflow-y-auto">
+                            {fasesExistentes.map((f) => (
+                              <button
+                                key={f}
+                                onClick={() => saveFase(tarea, f)}
+                                className={cn(
+                                  'w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-50 flex items-center justify-between gap-2',
+                                  tarea.fase === f ? 'text-indigo-600 font-semibold' : 'text-slate-700',
+                                )}
+                              >
+                                {f}
+                                {tarea.fase === f && <span className="text-indigo-400 flex-shrink-0">✓</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className={cn('p-2', fasesExistentes.length > 0 && 'border-t border-slate-100')}>
+                          <input
+                            autoFocus
+                            className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-400"
+                            placeholder="Nueva fase..."
+                            value={faseNueva}
+                            onChange={(e) => setFaseNueva(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && faseNueva.trim()) saveFase(tarea, faseNueva.trim())
+                              if (e.key === 'Escape') { setFaseEditingId(null); setFaseNueva('') }
+                            }}
+                          />
+                          {faseNueva.trim() && (
+                            <button
+                              onClick={() => saveFase(tarea, faseNueva.trim())}
+                              className="mt-1 w-full text-left px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                            >
+                              + Crear "{faseNueva.trim()}"
+                            </button>
+                          )}
+                        </div>
+                        {tarea.fase && (
+                          <div className="border-t border-slate-100 p-1">
+                            <button
+                              onClick={() => saveFase(tarea, undefined)}
+                              className="w-full text-left px-3 py-1 text-xs text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
+                            >
+                              Quitar fase
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </td>
 
                 {/* Fecha inicio — opcional */}
