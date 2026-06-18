@@ -48,6 +48,8 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
   const [mostrarFechaInicio, setMostrarFechaInicio] = useState(true)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragFase, setDragFase] = useState<string | null>(null)
+  const [dragOverFase, setDragOverFase] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [respEditingId, setRespEditingId] = useState<string | null>(null)
@@ -199,6 +201,35 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
     setDragOverId(null)
   }
 
+  const handleDropFase = async (targetFase: string) => {
+    if (!dragFase || dragFase === targetFase) { setDragFase(null); setDragOverFase(null); return }
+    // Get current fase order from rendered rows
+    const fases: string[] = []
+    for (const row of rows) {
+      if (row.kind === 'fase_header' && !fases.includes(row.label)) fases.push(row.label)
+    }
+    const fromIdx = fases.indexOf(dragFase)
+    const toIdx = fases.indexOf(targetFase)
+    if (fromIdx === -1 || toIdx === -1) { setDragFase(null); setDragOverFase(null); return }
+    const reorderedFases = [...fases]
+    const [moved] = reorderedFases.splice(fromIdx, 1)
+    reorderedFases.splice(toIdx, 0, moved)
+    // Assign new orden to root tasks in each fase (nivel 0 = no parent)
+    const updates: Array<[string, number]> = []
+    for (let fi = 0; fi < reorderedFases.length; fi++) {
+      let ti = 0
+      for (const row of rows) {
+        if (row.kind === 'tarea' && row.nivel === 0 && row.tarea.fase === reorderedFases[fi]) {
+          updates.push([row.tarea.id, fi * 100000 + ti * 1000])
+          ti++
+        }
+      }
+    }
+    await Promise.all(updates.map(([id, orden]) => actualizarTarea(id, { orden })))
+    setDragFase(null)
+    setDragOverFase(null)
+  }
+
   const handleGuardarFila = async () => {
     const fi = parseDate(fila.fechaInicio, 'T00:00:00')
     const ff = parseDate(fila.fechaFin, 'T23:59:59')
@@ -256,10 +287,31 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
           {rows.map((row, idx) => {
             // Fase section header
             if (row.kind === 'fase_header') {
+              const isDraggingThis = dragFase === row.label
+              const isDropTarget = dragOverFase === row.label && dragFase !== row.label
               return (
-                <tr key={`fase-${row.label}`}>
-                  <td colSpan={mostrarFechaInicio ? 13 : 12} className="px-3 py-2 border-b border-indigo-100 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wider">
-                    {row.label}
+                <tr key={`fase-${row.label}`}
+                  onDragOver={(e) => { e.preventDefault(); if (dragFase) setDragOverFase(row.label) }}
+                  onDragLeave={() => setDragOverFase(null)}
+                  onDrop={() => handleDropFase(row.label)}
+                >
+                  <td colSpan={mostrarFechaInicio ? 13 : 12}
+                    className={cn(
+                      'border-b border-indigo-100 text-white text-xs font-bold uppercase tracking-wider transition-colors',
+                      isDraggingThis ? 'bg-indigo-400 opacity-50' : isDropTarget ? 'bg-indigo-800' : 'bg-indigo-600',
+                    )}>
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <div
+                        draggable
+                        onDragStart={() => setDragFase(row.label)}
+                        onDragEnd={() => { setDragFase(null); setDragOverFase(null) }}
+                        className="cursor-grab active:cursor-grabbing text-indigo-300 hover:text-white flex-shrink-0"
+                        title="Arrastrar para reordenar fase"
+                      >
+                        <GripVertical size={13} />
+                      </div>
+                      {row.label}
+                    </div>
                   </td>
                 </tr>
               )

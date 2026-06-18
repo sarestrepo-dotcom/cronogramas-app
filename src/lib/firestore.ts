@@ -215,9 +215,20 @@ export async function crearTarea(data: Omit<Tarea, 'id' | 'creadoEn' | 'actualiz
   return ref.id
 }
 
+const PROGRESO_ESTADO: Partial<Record<string, number>> = {
+  pendiente: 0,
+  en_progreso: 50,
+  completada: 100,
+}
+
 export async function actualizarTarea(id: string, data: Partial<Tarea>) {
+  const update = { ...data }
+  if (update.estado !== undefined && update.progreso === undefined) {
+    const auto = PROGRESO_ESTADO[update.estado]
+    if (auto !== undefined) update.progreso = auto
+  }
   await updateDoc(doc(db, 'tareas', id), {
-    ...clean(data as Record<string, unknown>) as DocumentData,
+    ...clean(update as Record<string, unknown>) as DocumentData,
     actualizadoEn: serverTimestamp(),
   })
 }

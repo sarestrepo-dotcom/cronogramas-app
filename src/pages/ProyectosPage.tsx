@@ -5,9 +5,9 @@ import { Timestamp } from 'firebase/firestore'
 import { useProyectos } from '@/hooks/useProyectos'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useAuth } from '@/hooks/useAuth'
-import { crearProyecto, actualizarProyecto, eliminarProyecto, agregarMiembroProyecto, removerMiembroProyecto, buscarUsuarioPorEmail, getUsuario } from '@/lib/firestore'
+import { crearProyecto, actualizarProyecto, eliminarProyecto, agregarMiembroProyecto, removerMiembroProyecto, buscarUsuarioPorEmail, getUsuario, suscribirPermitidos } from '@/lib/firestore'
 import { cn, formatFecha } from '@/lib/utils'
-import type { Empresa, Proyecto, Rol, UsuarioApp } from '@/types'
+import type { Empresa, Proyecto, Rol, UsuarioApp, UsuarioPermitido } from '@/types'
 import { COLORES_EMPRESAS as COLORES_MAP } from '@/types'
 
 const ESTADO_CONFIG = {
@@ -321,6 +321,7 @@ function CompartirProyectoModal({ proyecto, miUid, onClose }: {
 }) {
   const [miembros, setMiembros] = useState<MiembroInfo[]>([])
   const [loadingMiembros, setLoadingMiembros] = useState(true)
+  const [permitidos, setPermitidos] = useState<UsuarioPermitido[]>([])
   const [email, setEmail] = useState('')
   const [rol, setRol] = useState<Rol>('miembro')
   const [saving, setSaving] = useState(false)
@@ -343,31 +344,46 @@ function CompartirProyectoModal({ proyecto, miUid, onClose }: {
     cargarMiembros()
   }, [proyecto.id])
 
-  const handleAgregar = async (e: React.FormEvent) => {
-    e.preventDefault()
+  useEffect(() => {
+    const unsub = suscribirPermitidos((lista) => {
+      setPermitidos(lista.filter((u) => u.activo !== false))
+    })
+    return unsub
+  }, [])
+
+  const emailsMiembros = new Set(miembros.map((m) => m.email.toLowerCase()))
+  const sugerencias = permitidos.filter((u) => !emailsMiembros.has(u.email.toLowerCase()))
+
+  const agregarPorEmail = async (emailTarget: string, nombreDisplay?: string) => {
     setError('')
     setSuccess('')
-    const emailLower = email.trim().toLowerCase()
+    const emailLower = emailTarget.trim().toLowerCase()
     if (!emailLower) return
     setSaving(true)
     try {
       const usuario = await buscarUsuarioPorEmail(emailLower) as (UsuarioApp & { id: string }) | null
       if (!usuario) {
-        setError('No se encontró ningún usuario con ese email. Asegúrate de que ya haya iniciado sesión en la app.')
+        setError(`No se encontró cuenta para ${emailLower}. La persona debe haber iniciado sesión en la app al menos una vez.`)
         return
       }
       const uid = usuario.uid ?? (usuario as unknown as { id: string }).id
       await agregarMiembroProyecto(proyecto.id, uid, rol, emailLower)
+      const displayName = usuario.displayName || nombreDisplay || emailLower
       setMiembros((prev) => {
         const exists = prev.find((m) => m.uid === uid)
         if (exists) return prev.map((m) => m.uid === uid ? { ...m, rol } : m)
-        return [...prev, { uid, rol, displayName: usuario.displayName, email: usuario.email }]
+        return [...prev, { uid, rol, displayName, email: usuario.email }]
       })
       setEmail('')
-      setSuccess(`${usuario.displayName} ahora tiene acceso al proyecto.`)
+      setSuccess(`${displayName} ahora tiene acceso al proyecto.`)
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleAgregar = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await agregarPorEmail(email)
   }
 
   const handleRemover = async (uid: string, email: string) => {
@@ -391,34 +407,65 @@ function CompartirProyectoModal({ proyecto, miUid, onClose }: {
           </button>
         </div>
 
-        {/* Agregar persona */}
-        <form onSubmit={handleAgregar} className="space-y-3">
-          <label className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
-            <UserPlus size={14} /> Agregar persona
-          </label>
-          <input
-            type="email"
-            className="input-base"
-            placeholder="email@ejemplo.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <div className="flex gap-2">
+        {/* Sección agregar */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+              <UserPlus size={14} /> Agregar persona
+            </p>
             <select
-              className="input-base flex-1"
+              className="input-base py-1 text-xs w-36"
               value={rol}
               onChange={(e) => setRol(e.target.value as Rol)}
             >
               <option value="miembro">Miembro</option>
               <option value="viewer">Lector</option>
             </select>
-            <button type="submit" disabled={saving || !email.trim()} className="btn-primary px-5">
+          </div>
+
+          {/* Sugerencias de usuarios con acceso al dashboard */}
+          {sugerencias.length > 0 && (
+            <div className="space-y-1 max-h-36 overflow-y-auto rounded-xl border border-slate-200 p-1">
+              {sugerencias.map((u) => (
+                <button
+                  key={u.email}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => agregarPorEmail(u.email, u.nombre)}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors text-left group"
+                >
+                  <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700 flex-shrink-0">
+                    {u.nombre?.[0]?.toUpperCase() ?? u.email[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{u.nombre}</p>
+                    <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                  </div>
+                  <span className="text-xs text-indigo-500 opacity-0 group-hover:opacity-100 flex-shrink-0 flex items-center gap-1">
+                    <UserPlus size={12} /> Agregar
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Email manual */}
+          <form onSubmit={handleAgregar} className="flex gap-2">
+            <input
+              type="email"
+              className="input-base flex-1"
+              placeholder="Otro email..."
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <button type="submit" disabled={saving || !email.trim()} className="btn-primary px-4 flex-shrink-0">
               {saving ? '...' : 'Agregar'}
             </button>
-          </div>
+          </form>
+
           {error && <p className="text-xs text-red-600">{error}</p>}
           {success && <p className="text-xs text-emerald-600">{success}</p>}
-        </form>
+        </div>
 
         {/* Lista de miembros actuales */}
         <div>

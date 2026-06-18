@@ -12,17 +12,18 @@ import type { Tarea, TipoTarea, EstadoTarea } from '@/types'
 type CampoImport =
   | 'titulo' | 'fechaInicio' | 'fechaFin' | 'prioridad'
   | 'tipo' | 'responsable' | 'descripcion' | 'progreso'
-  | 'fase' | 'notas' | 'estado' | 'ignorar'
+  | 'fase' | 'notas' | 'estado' | 'padre' | 'ignorar'
 
 const CAMPO_LABELS: Record<CampoImport, string> = {
   titulo:      'Título',
   fase:        'Fase',
+  padre:       'Padre (título del grupo)',
   fechaInicio: 'Fecha inicio',
   fechaFin:    'Fecha fin',
   responsable: 'Responsable',
   estado:      'Estado',
   prioridad:   'Prioridad',
-  tipo:        'Tipo (T/S)',
+  tipo:        'Tipo (padre/hito/tarea)',
   progreso:    'Progreso %',
   notas:       'Notas / IA',
   descripcion: 'Descripción',
@@ -30,7 +31,7 @@ const CAMPO_LABELS: Record<CampoImport, string> = {
 }
 
 const CAMPOS_ORDEN: CampoImport[] = [
-  'titulo', 'fase', 'fechaInicio', 'fechaFin', 'responsable',
+  'titulo', 'fase', 'padre', 'fechaInicio', 'fechaFin', 'responsable',
   'estado', 'prioridad', 'tipo', 'progreso', 'notas', 'descripcion', 'ignorar',
 ]
 
@@ -38,6 +39,7 @@ const CAMPOS_ORDEN: CampoImport[] = [
 interface FilaTarea {
   titulo: string
   fase: string
+  padre: string
   fechaInicio: string
   fechaFin: string
   prioridad: Tarea['prioridad']
@@ -101,6 +103,7 @@ function validarFecha(s: string): boolean {
 const CAMPO_KEYWORDS: Record<Exclude<CampoImport, 'ignorar'>, string[]> = {
   titulo:      ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'item', 'concepto'],
   fase:        ['fase', 'phase', 'frente', 'etapa', 'sprint', 'modulo', 'categoria'],
+  padre:       ['padre', 'parent', 'grupo padre', 'tarea padre', 'pertenece a', 'grupo'],
   fechaInicio: ['inicio', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio'],
   fechaFin:    ['fin', 'end', 'termino', 'deadline', 'vencimiento', 'hasta', 'cierre', 'entrega', 'due', 'fecha fin', 'fecha de fin'],
   responsable: ['responsable', 'assigned', 'owner', 'assignee', 'persona', 'ejecutor', 'encargado', 'quien', 'asignado'],
@@ -167,7 +170,7 @@ function detectarMapping(headers: string[], sep: string): Record<number, CampoIm
 
 function parsearConMapeo(line: string, sep: string, mapping: Record<number, CampoImport>): FilaTarea {
   const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ''))
-  let titulo = '', fase = '', fechaInicio = '', fechaFin = '', responsable = '', descripcion = '', notas = ''
+  let titulo = '', fase = '', padre = '', fechaInicio = '', fechaFin = '', responsable = '', descripcion = '', notas = ''
   let prioridadRaw = '', tipoRaw = '', progresoRaw = '', estadoRaw = ''
   let hayFechaInicio = false, hayFechaFin = false
 
@@ -176,6 +179,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
     switch (campo) {
       case 'titulo':      titulo = val; break
       case 'fase':        fase = val; break
+      case 'padre':       padre = val; break
       case 'fechaInicio': fechaInicio = parsearFecha(val); if (val.trim()) hayFechaInicio = true; break
       case 'fechaFin':    fechaFin    = parsearFecha(val); if (val.trim()) hayFechaFin    = true; break
       case 'responsable': responsable = val; break
@@ -192,7 +196,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
   const estado: EstadoTarea = ESTADOS_MAP[estadoRaw.toLowerCase().trim()] ?? 'pendiente'
   const tipoExplicito = TIPOS_MAP[tipoRaw.toLowerCase().trim()]
   const sinFechas = !hayFechaInicio && !hayFechaFin
-  const tipo: TipoTarea = tipoExplicito ?? (sinFechas ? 'grupo' : 'tarea')
+  const tipo: TipoTarea = tipoExplicito ?? (sinFechas && !padre.trim() ? 'grupo' : 'tarea')
   const progreso = Math.min(100, Math.max(0, parseInt(progresoRaw) || 0))
 
   let error: string | undefined
@@ -200,7 +204,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
   else if (tipo !== 'grupo' && !validarFecha(fechaInicio)) error = 'Fecha inicio inválida'
   else if (tipo !== 'grupo' && !validarFecha(fechaFin))    error = 'Fecha fin inválida'
 
-  return { titulo, fase, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, valida: !error, error }
+  return { titulo, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, valida: !error, error }
 }
 
 // ─── Google Sheets fetcher ────────────────────────────────────────────────────
@@ -372,7 +376,9 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
     setImportando(true)
     try {
       const hoy = new Date().toISOString().split('T')[0]
-      const grupoIdByIndex = new Map<number, string>()
+      // Maps for parent resolution
+      const grupoIdByIndex = new Map<number, string>()   // index → Firestore id
+      const grupoIdByTitulo = new Map<string, string>()  // titulo.toLowerCase() → Firestore id
 
       // First pass: create grupos and record their Firestore IDs
       for (let i = 0; i < filaValidas.length; i++) {
@@ -386,27 +392,36 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
           asignadoA: f.responsable.trim() || undefined, progreso: f.progreso,
           fase: f.fase.trim() || undefined,
           notas: f.notas.trim() || undefined,
-          orden: i,
+          orden: i * 1000,
           proyectoId, empresaId, dependencias: [], creadoPor: uid,
         } as Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>)
         grupoIdByIndex.set(i, id)
+        grupoIdByTitulo.set(f.titulo.trim().toLowerCase(), id)
       }
 
       // Second pass: create non-grupo tasks preserving sheet order via `orden`
       for (let i = 0; i < filaValidas.length; i++) {
         const f = filaValidas[i]
         if (f.tipo === 'grupo') continue
+
+        // Resolve parentId: explicit padre column first, then nearest grupo above
         let parentId: string | undefined
-        for (let j = i - 1; j >= 0; j--) {
-          if (filaValidas[j].tipo === 'grupo') { parentId = grupoIdByIndex.get(j); break }
+        if (f.padre.trim()) {
+          parentId = grupoIdByTitulo.get(f.padre.trim().toLowerCase())
         }
+        if (!parentId) {
+          for (let j = i - 1; j >= 0; j--) {
+            if (filaValidas[j].tipo === 'grupo') { parentId = grupoIdByIndex.get(j); break }
+          }
+        }
+
         const fin = f.tipo === 'hito' ? f.fechaInicio : (f.fechaFin || f.fechaInicio)
         await crearTarea({
           titulo: f.titulo, descripcion: f.descripcion,
           fechaInicio: toTS(f.fechaInicio, false), fechaFin: toTS(fin, true),
           estado: f.estado, prioridad: f.prioridad, tipo: f.tipo, parentId,
           asignadoA: f.responsable.trim() || undefined, progreso: f.progreso,
-          orden: i,
+          orden: i * 1000,
           fase: f.fase.trim() || undefined,
           notas: f.notas.trim() || undefined,
           proyectoId, empresaId, dependencias: [], creadoPor: uid,
