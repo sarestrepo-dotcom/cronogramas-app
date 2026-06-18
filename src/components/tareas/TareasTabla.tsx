@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { Timestamp } from 'firebase/firestore'
-import { Plus, Trash2, Check, X, GripVertical } from 'lucide-react'
+import { Plus, Trash2, Check, X, GripVertical, ChevronDown, ChevronRight } from 'lucide-react'
 import { crearTarea, actualizarTarea, eliminarTarea } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { cn, ESTADO_COLORS, ESTADO_LABELS, tsToDate } from '@/lib/utils'
@@ -50,6 +50,9 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragFase, setDragFase] = useState<string | null>(null)
   const [dragOverFase, setDragOverFase] = useState<string | null>(null)
+  const [collapsedFases, setCollapsedFases] = useState<Set<string>>(new Set())
+  const toggleFase = (fase: string) =>
+    setCollapsedFases((prev) => { const s = new Set(prev); s.has(fase) ? s.delete(fase) : s.add(fase); return s })
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [respEditingId, setRespEditingId] = useState<string | null>(null)
@@ -284,11 +287,15 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, idx) => {
+          {(() => {
+            let currentFase: string | null = null
+            return rows.map((row, idx) => {
             // Fase section header
             if (row.kind === 'fase_header') {
+              currentFase = row.label
               const isDraggingThis = dragFase === row.label
               const isDropTarget = dragOverFase === row.label && dragFase !== row.label
+              const isFaseCollapsed = collapsedFases.has(row.label)
               return (
                 <tr key={`fase-${row.label}`}
                   onDragOver={(e) => { e.preventDefault(); if (dragFase) setDragOverFase(row.label) }}
@@ -310,12 +317,27 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                       >
                         <GripVertical size={13} />
                       </div>
+                      <button
+                        onClick={() => toggleFase(row.label)}
+                        className="text-indigo-200 hover:text-white flex-shrink-0"
+                        title={isFaseCollapsed ? 'Expandir fase' : 'Colapsar fase'}
+                      >
+                        {isFaseCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      </button>
                       {row.label}
+                      {isFaseCollapsed && (
+                        <span className="ml-1 text-indigo-300 font-normal normal-case tracking-normal">
+                          (colapsado)
+                        </span>
+                      )}
                     </div>
                   </td>
                 </tr>
               )
             }
+
+            // Hide rows belonging to a collapsed fase
+            if (currentFase && collapsedFases.has(currentFase)) return null
 
             const { tarea, nivel } = row
             const isGrupo = tarea.tipo === 'grupo'
@@ -736,7 +758,8 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                 </td>
               </tr>
             )
-          })}
+          })
+          })()}
 
           {/* Fila nueva — mismo orden que headers */}
           {mostrarFila && (

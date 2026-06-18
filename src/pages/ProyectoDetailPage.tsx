@@ -342,23 +342,35 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
   onRowClick: (t: Tarea) => void
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [collapsedFases, setCollapsedFases] = useState<Set<string>>(new Set())
   const rows = buildHierarchy(tareas)
 
   const toggleCollapse = (id: string) =>
     setCollapsed((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
 
+  const toggleFase = (fase: string) =>
+    setCollapsedFases((prev) => { const s = new Set(prev); s.has(fase) ? s.delete(fase) : s.add(fase); return s })
+
   return (
     <div className="p-6 space-y-1 max-w-4xl mx-auto">
-      {rows.map((row, rowIdx) => {
+      {(() => {
+        let currentFase: string | null = null
+        return rows.map((row, rowIdx) => {
         // Fase section header
         if (row.kind === 'fase_header') {
+          currentFase = row.label
+          const isFaseCollapsed = collapsedFases.has(row.label)
           return (
             <div key={`fase-${row.label}-${rowIdx}`} className="mt-5 first:mt-0 mb-1">
               <div className="flex items-center gap-3">
                 <div className="h-px flex-1 bg-indigo-200" />
-                <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest bg-indigo-50 border border-indigo-200 rounded-full px-3 py-1">
+                <button
+                  onClick={() => toggleFase(row.label)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 uppercase tracking-widest bg-indigo-50 border border-indigo-200 rounded-full px-3 py-1 hover:bg-indigo-100 transition-colors"
+                >
+                  {isFaseCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
                   {row.label}
-                </span>
+                </button>
                 <div className="h-px flex-1 bg-indigo-200" />
               </div>
             </div>
@@ -368,6 +380,10 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
         const { tarea, nivel } = row
         const isGrupo = tarea.tipo === 'grupo'
         const isCollapsed = collapsed.has(tarea.id)
+
+        // Hide rows belonging to a collapsed fase
+        if (currentFase && collapsedFases.has(currentFase)) return null
+
         // Hide children if parent is collapsed
         if (nivel > 0) {
           const parent = tareas.find((t) => t.id === tarea.parentId)
@@ -421,7 +437,8 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
             />
           </div>
         )
-      })}
+      })
+      })()}
     </div>
   )
 }
