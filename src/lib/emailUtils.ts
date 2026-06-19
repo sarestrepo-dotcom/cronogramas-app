@@ -21,11 +21,25 @@ export function generarEmailsResumen(tareas: Tarea[], hoy: Date = new Date()): E
     nonGrupo.flatMap(t => t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : []))
   )]
 
+  const norm = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+
+  const matchResp = (taskResp: string, listName: string): boolean => {
+    const t = norm(taskResp)
+    const l = norm(listName)
+    if (!t || !l) return false
+    if (t === l) return true                  // exact
+    if (t.includes(l) || l.includes(t)) return true  // one contains the other
+    // First-word match only when list name is a single word (no ambiguity)
+    const lWords = l.split(/\s+/)
+    if (lWords.length === 1 && t.split(/\s+/)[0] === lWords[0]) return true
+    return false
+  }
+
   return responsables.map(responsable => {
-    const firstWord = responsable.toLowerCase().split(' ')[0]
     const mis = nonGrupo.filter(t => {
       const todos = t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])
-      return todos.some(r => r.toLowerCase().split(' ')[0] === firstWord)
+      return todos.some(r => matchResp(r, responsable))
     })
 
     const activasEstaSemana = mis.filter(t => {

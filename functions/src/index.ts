@@ -177,17 +177,24 @@ async function procesarConfig(config: EmailConfig, hoy: Date) {
   }
 }
 
+function normStr(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+}
+
+function matchResp(taskResp: string, listName: string): boolean {
+  const t = normStr(taskResp)
+  const l = normStr(listName)
+  if (!t || !l) return false
+  if (t === l) return true
+  if (t.includes(l) || l.includes(t)) return true
+  const lWords = l.split(/\s+/)
+  if (lWords.length === 1 && t.split(/\s+/)[0] === lWords[0]) return true
+  return false
+}
+
 function esTareaDeResponsable(t: Tarea, nombre: string): boolean {
-  const nom = nombre.toLowerCase()
-  const firstNom = nom.split(' ')[0]
-  const todos = [
-    t.asignadoA,
-    ...(t.asignadosA ?? []),
-  ].filter(Boolean) as string[]
-  return todos.some(a => {
-    const al = a.toLowerCase()
-    return al.includes(firstNom) || firstNom.includes(al.split(' ')[0])
-  })
+  const todos = [t.asignadoA, ...(t.asignadosA ?? [])].filter(Boolean) as string[]
+  return todos.some(a => matchResp(a, nombre))
 }
 
 async function enviarEmail(
