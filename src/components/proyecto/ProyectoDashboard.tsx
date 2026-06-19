@@ -282,7 +282,24 @@ function VistaSemanal({ tareas, allTareas }: { tareas: Tarea[]; allTareas: Tarea
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {weekMap.map(week => (
+      {weekMap.map(week => {
+        // Group tasks by fase, preserving orden within each fase
+        const byFase = new Map<string, Tarea[]>()
+        const sorted = [...week.tasks].sort((a, b) =>
+          (a.orden ?? 999999) !== (b.orden ?? 999999)
+            ? (a.orden ?? 999999) - (b.orden ?? 999999)
+            : (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0)
+        )
+        for (const t of sorted) {
+          const fase = t.fase?.trim() ?? ''
+          if (!byFase.has(fase)) byFase.set(fase, [])
+          byFase.get(fase)!.push(t)
+        }
+        // Sin fase tasks go last
+        const conFase = [...byFase.entries()].filter(([f]) => f !== '')
+        const sinFase = byFase.get('') ?? []
+
+        return (
         <div key={week.label} className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           {/* Week header */}
           <div className="bg-slate-800 text-white px-5 py-3 flex items-center gap-4">
@@ -294,57 +311,68 @@ function VistaSemanal({ tareas, allTareas }: { tareas: Tarea[]; allTareas: Tarea
           </div>
 
           {/* Tasks table */}
-          <table className="w-full text-sm min-w-[700px] overflow-x-auto">
+          <table className="w-full text-sm min-w-[700px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Semana', 'Período', 'Grupo / Fase', 'Tarea', 'Responsable', 'Estado', '% Avance'].map(h => (
+                {['Semana', 'Período', 'Grupo', 'Tarea', 'Responsable', 'Estado', '% Avance'].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {week.tasks
-                .sort((a, b) => {
-                  const pa = a.parentId ?? ''
-                  const pb = b.parentId ?? ''
-                  if (pa !== pb) return pa.localeCompare(pb)
-                  return (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0)
-                })
-                .map(t => {
-                  const grupoNombre = t.parentId ? (grupoMap.get(t.parentId) ?? '') : ''
-                  const ec = ESTADO_COLORS[t.estado]
-                  return (
-                    <tr key={t.id} className="hover:bg-slate-50/60">
-                      <td className="px-4 py-2.5 text-xs font-semibold text-slate-600">{week.label}</td>
-                      <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
-                        {formatFecha(t.fechaInicio, 'dd/MM')} – {formatFecha(t.fechaFin, 'dd/MM')}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-slate-500 max-w-[120px] truncate">{grupoNombre || '—'}</td>
-                      <td className="px-4 py-2.5 font-medium text-slate-800 max-w-[200px]">
-                        {t.parentId && <span className="text-slate-400 mr-1">└</span>}
-                        <span className="truncate inline-block max-w-full">{t.titulo}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">{t.asignadoA ?? '—'}</td>
-                      <td className="px-4 py-2.5">
-                        <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap', ec.bg, ec.text)}>
-                          {ESTADO_LABELS[t.estado]}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="w-14 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${t.progreso}%` }} />
-                          </div>
-                          <span className="text-xs text-slate-500">{t.progreso}%</span>
-                        </div>
+              {/* Tasks grouped by fase */}
+              {[...conFase, ...(sinFase.length ? [['', sinFase] as [string, Tarea[]]] : [])].map(([fase, faseTasks]) => (
+                <>
+                  {fase && (
+                    <tr key={`fase-${fase}`}>
+                      <td colSpan={7} className="px-4 py-1.5 bg-indigo-600 text-white text-xs font-bold uppercase tracking-wider">
+                        {fase}
                       </td>
                     </tr>
-                  )
-                })}
+                  )}
+                  {(faseTasks as Tarea[]).map(t => {
+                    const grupoNombre = t.parentId ? (grupoMap.get(t.parentId) ?? '') : ''
+                    const responsables = t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])
+                    const ec = ESTADO_COLORS[t.estado]
+                    return (
+                      <tr key={t.id} className="hover:bg-slate-50/60">
+                        <td className="px-4 py-2.5 text-xs font-semibold text-slate-600">{week.label}</td>
+                        <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                          {formatFecha(t.fechaInicio, 'dd/MM')} – {formatFecha(t.fechaFin, 'dd/MM')}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-slate-500 max-w-[130px] truncate" title={grupoNombre || undefined}>
+                          {grupoNombre || '—'}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium text-slate-800 max-w-[200px]">
+                          {grupoNombre && <span className="text-slate-300 mr-1">└</span>}
+                          <span className="truncate inline-block max-w-full">{t.titulo}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                          {responsables.length ? responsables.join(', ') : '—'}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap', ec.bg, ec.text)}>
+                            {ESTADO_LABELS[t.estado]}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <div className="w-14 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${t.progreso}%` }} />
+                            </div>
+                            <span className="text-xs text-slate-500">{t.progreso}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </>
+              ))}
             </tbody>
           </table>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
