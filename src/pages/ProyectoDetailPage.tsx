@@ -22,6 +22,7 @@ import { GanttVisual } from '@/components/gantt/GanttVisual'
 import { KanbanView } from '@/components/kanban/KanbanView'
 import { ProyectoDashboard } from '@/components/proyecto/ProyectoDashboard'
 import { ProcesarEmailModal } from '@/components/tareas/ProcesarEmailModal'
+import { LineasBaseModal } from '@/components/lineasBase/LineasBaseModal'
 
 type TopTab = 'cronograma' | 'dashboard'
 type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt'
@@ -46,6 +47,7 @@ export function ProyectoDetailPage() {
   const [filtroResponsable, setFiltroResponsable] = useState('')
   const [filtroGrupo, setFiltroGrupo] = useState('')
   const [showProcesarEmail, setShowProcesarEmail] = useState(false)
+  const [showLineasBase, setShowLineasBase] = useState(false)
 
   const empresa = empresas.find((e) => e.id === empresaId)
   const enrichedTareas = useMemo(() => enrichTareas(tareas), [tareas])
@@ -157,6 +159,10 @@ export function ProyectoDetailPage() {
               <button onClick={() => setShowImport(true)}
                 className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
                 <Upload size={14} /> Importar
+              </button>
+              <button onClick={() => setShowLineasBase(true)}
+                className="flex items-center gap-2 border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
+                <BarChart2 size={14} /> Líneas base
               </button>
               <button onClick={() => setShowProcesarEmail(true)}
                 className="flex items-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
@@ -322,6 +328,16 @@ export function ProyectoDetailPage() {
             setTimeout(() => setImportMsg(''), 4000)
             setVista('tabla')
           }}
+        />
+      )}
+
+      {/* Modal líneas base */}
+      {showLineasBase && proyectoId && (
+        <LineasBaseModal
+          proyectoId={proyectoId}
+          uid={user!.uid}
+          tareas={enrichedTareas}
+          onClose={() => setShowLineasBase(false)}
         />
       )}
     </div>

@@ -118,6 +118,29 @@ export interface TareaNuevaPropuesta {
   aplicar: boolean
 }
 
+export interface TareaSnapshot {
+  tareaId: string
+  titulo: string
+  tipo?: TipoTarea
+  fase?: string
+  parentId?: string
+  fechaInicio: Timestamp
+  fechaFin: Timestamp
+  estado: EstadoTarea
+  progreso: number
+  asignadosA?: string[]
+}
+
+export interface LineaBase {
+  id: string
+  proyectoId: string
+  nombre: string
+  motivo: string
+  creadoPor: string
+  creadoEn: Timestamp
+  tareas: TareaSnapshot[]
+}
+
 export type ColoresEmpresa = {
   bg: string
   text: string

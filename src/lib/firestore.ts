@@ -20,7 +20,7 @@ import {
 } from 'firebase/firestore'
 import { db, functions } from './firebase'
 import { httpsCallable } from 'firebase/functions'
-import type { Empresa, Proyecto, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig } from '@/types'
+import type { Empresa, Proyecto, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig, LineaBase } from '@/types'
 
 function clean(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
@@ -378,4 +378,28 @@ export function suscribirPermitidos(cb: (lista: UsuarioPermitido[]) => void): ()
   return onSnapshot(collection(db, 'usuarios_permitidos'), (snap) => {
     cb(snap.docs.map((d) => d.data() as UsuarioPermitido))
   })
+}
+
+// ─── Líneas Base ──────────────────────────────────────────────────────────────
+
+export async function guardarLineaBase(data: Omit<LineaBase, 'id' | 'creadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'lineas_base'), {
+    ...data,
+    creadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export function suscribirLineasBase(proyectoId: string, cb: (lbs: LineaBase[]) => void): () => void {
+  const q = query(collection(db, 'lineas_base'), where('proyectoId', '==', proyectoId))
+  return onSnapshot(q, (snap) => {
+    const lbs = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as LineaBase)
+      .sort((a, b) => (b.creadoEn?.seconds ?? 0) - (a.creadoEn?.seconds ?? 0))
+    cb(lbs)
+  })
+}
+
+export async function eliminarLineaBase(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'lineas_base', id))
 }
