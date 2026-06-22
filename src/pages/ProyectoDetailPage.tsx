@@ -5,7 +5,7 @@ import {
   Plus, List, BarChart2, Table2, ArrowLeft, Circle, CheckCircle2,
   Clock, MoreVertical, Trash2, Pencil, Upload, ChevronDown, ChevronRight,
   LayoutDashboard, Columns3, Link2, X, Filter, Printer, LayoutTemplate,
-  Users, AlertTriangle, RotateCcw,
+  Users, AlertTriangle, RotateCcw, Settings2, Mail,
 } from 'lucide-react'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useTareas } from '@/hooks/useTareas'
@@ -40,7 +40,7 @@ export function ProyectoDetailPage() {
   const { tareas, loading } = useTareas(proyectoId ?? null)
   const navigate = useNavigate()
 
-  const { pushUndo, mensaje: undoMensaje, canUndo } = useUndoStack()
+  const { pushUndo, mensaje: undoMensaje } = useUndoStack()
 
   const [topTab, setTopTab] = useState<TopTab>('cronograma')
   const [vista, setVista] = useState<Vista>('lista')
@@ -55,6 +55,7 @@ export function ProyectoDetailPage() {
   const [filtroResponsable, setFiltroResponsable] = useState('')
   const [filtroGrupo, setFiltroGrupo] = useState('')
   const [showProcesarEmail, setShowProcesarEmail] = useState(false)
+  const [showHerramientas, setShowHerramientas] = useState(false)
 
   const empresa = empresas.find((e) => e.id === empresaId)
   const enrichedTareas = useMemo(() => enrichTareas(tareas), [tareas])
@@ -158,27 +159,36 @@ export function ProyectoDetailPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toast undo */}
-      {undoMensaje && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
-          <RotateCcw size={14} /> {undoMensaje}
-        </div>
-      )}
-
-      {/* Topbar */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate(`/empresa/${empresaId}/proyectos`)} className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100">
-            <ArrowLeft size={18} />
-          </button>
-          <div>
-            <h1 className="font-semibold text-slate-900">Proyecto</h1>
-            <p className="text-xs text-slate-500">{tareas.length} tarea{tareas.length !== 1 ? 's' : ''}</p>
+      {/* Toasts flotantes */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+        {undoMensaje && (
+          <div className="bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 pointer-events-auto">
+            <RotateCcw size={14} /> {undoMensaje}
           </div>
-          {/* Salud del proyecto */}
-          {!loading && tareas.length > 0 && (
-            <div className="flex items-center gap-1.5">
-              {vencidasCount > 0 ? (
+        )}
+        {importMsg && (
+          <div className="bg-emerald-700 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 pointer-events-auto">
+            <CheckCircle2 size={14} /> {importMsg}
+          </div>
+        )}
+      </div>
+
+      {/* ── Menú sticky 2 niveles ─────────────────────────────────── */}
+      <div className="sticky top-0 z-10 bg-white flex-shrink-0">
+
+        {/* Nivel 1: navegación + acción principal */}
+        <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate(`/empresa/${empresaId}/proyectos`)}
+              className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+              <ArrowLeft size={17} />
+            </button>
+            <div>
+              <h1 className="font-semibold text-slate-900 text-sm leading-tight">Proyecto</h1>
+              <p className="text-[11px] text-slate-400">{tareas.length} tarea{tareas.length !== 1 ? 's' : ''}</p>
+            </div>
+            {!loading && tareas.length > 0 && (
+              vencidasCount > 0 ? (
                 <span className="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
                   <AlertTriangle size={11} /> {vencidasCount} vencida{vencidasCount !== 1 ? 's' : ''}
                 </span>
@@ -190,83 +200,101 @@ export function ProyectoDetailPage() {
                 <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                   <CheckCircle2 size={11} /> Al día
                 </span>
-              )}
-              {canUndo && (
-                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                  Ctrl+Z para deshacer
-                </span>
-              )}
-            </div>
-          )}
+              )
+            )}
+          </div>
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
+            <Plus size={15} /> Nueva tarea
+          </button>
         </div>
 
-        <div className="flex items-center gap-2">
-          {importMsg && (
-            <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
-              {importMsg}
-            </span>
-          )}
-
-          {/* Top-level tab toggle */}
-          <div className="flex items-center bg-slate-100 rounded-xl p-1">
+        {/* Nivel 2: tabs + vistas + herramientas */}
+        <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-100">
+          {/* Dashboard / Cronograma */}
+          <div className="flex items-center bg-slate-100 rounded-xl p-0.5">
             <button onClick={() => setTopTab('dashboard')}
-              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-sm font-medium transition-colors',
                 topTab === 'dashboard' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-              <LayoutDashboard size={14} /> Dashboard
+              <LayoutDashboard size={13} /> Dashboard
             </button>
             <button onClick={() => setTopTab('cronograma')}
-              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-sm font-medium transition-colors',
                 topTab === 'cronograma' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-              <BarChart2 size={14} /> Cronograma
+              <BarChart2 size={13} /> Cronograma
             </button>
           </div>
 
           {topTab === 'cronograma' && (
             <>
-              {/* View toggle */}
-              <div className="flex items-center bg-slate-100 rounded-xl p-1">
+              <div className="w-px h-5 bg-slate-200 mx-1" />
+
+              {/* Selector de vista */}
+              <div className="flex items-center bg-slate-100 rounded-xl p-0.5">
                 {([
-                  ['lista',  <List size={13} />,    'Lista'],
-                  ['tabla',  <Table2 size={13} />,  'Tabla'],
-                  ['kanban', <Columns3 size={13} />, 'Kanban'],
+                  ['lista',  <List size={13} />,     'Lista'],
+                  ['tabla',  <Table2 size={13} />,   'Tabla'],
+                  ['kanban', <Columns3 size={13} />,  'Kanban'],
                   ['gantt',  <BarChart2 size={13} />, 'Gantt'],
-                  ['carga',  <Users size={13} />,   'Carga'],
+                  ['carga',  <Users size={13} />,    'Carga'],
                 ] as [Vista, React.ReactNode, string][]).map(([v, icon, label]) => (
                   <button key={v} onClick={() => setVista(v)}
-                    className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
+                    className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-sm font-medium transition-colors',
                       vista === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
                     {icon} {label}
                   </button>
                 ))}
               </div>
 
+              <div className="flex-1" />
+
+              {/* Importar */}
               <button onClick={() => setShowImport(true)}
-                className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
+                className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 px-3 py-1.5 rounded-xl transition-colors">
                 <Upload size={14} /> Importar
               </button>
-              <button onClick={() => setShowLineasBase(true)}
-                className="flex items-center gap-2 border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
-                <BarChart2 size={14} /> Líneas base
-              </button>
-              <button onClick={() => setShowPlantillas(true)}
-                className="flex items-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
-                <LayoutTemplate size={14} /> Plantillas
-              </button>
-              <button onClick={() => abrirVistaPDF(enrichedTareas, undefined)}
-                className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
-                <Printer size={14} /> PDF
-              </button>
-              <button onClick={() => setShowProcesarEmail(true)}
-                className="flex items-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
-                <ChevronRight size={14} /> Procesar email
-              </button>
+
+              {/* Herramientas dropdown */}
+              <div className="relative">
+                <button onClick={() => setShowHerramientas((v) => !v)}
+                  className={cn(
+                    'flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-xl border transition-colors',
+                    showHerramientas
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                      : 'text-slate-600 border-slate-200 hover:bg-slate-50'
+                  )}>
+                  <Settings2 size={14} /> Herramientas
+                  <ChevronDown size={13} className={cn('transition-transform', showHerramientas && 'rotate-180')} />
+                </button>
+                {showHerramientas && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowHerramientas(false)} />
+                    <div className="absolute right-0 top-10 z-20 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 w-52">
+                      <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Versiones</p>
+                      <button onClick={() => { setShowLineasBase(true); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <BarChart2 size={14} className="text-amber-500" /> Líneas base
+                      </button>
+                      <button onClick={() => { setShowPlantillas(true); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <LayoutTemplate size={14} className="text-violet-500" /> Plantillas
+                      </button>
+                      <div className="border-t border-slate-100 my-1" />
+                      <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Exportar / IA</p>
+                      <button onClick={() => { abrirVistaPDF(enrichedTareas, undefined); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <Printer size={14} className="text-slate-500" /> Exportar PDF
+                      </button>
+                      <button onClick={() => { setShowProcesarEmail(true); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <Mail size={14} className="text-violet-500" /> Procesar email IA
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           )}
-
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
-            <Plus size={15} /> Nueva tarea
-          </button>
         </div>
       </div>
 
