@@ -20,7 +20,7 @@ import {
 } from 'firebase/firestore'
 import { db, functions } from './firebase'
 import { httpsCallable } from 'firebase/functions'
-import type { Empresa, Proyecto, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig, LineaBase } from '@/types'
+import type { Empresa, Proyecto, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig, LineaBase, Comentario, CambioHistorial, Plantilla, PlantillaTarea } from '@/types'
 
 function clean(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
@@ -407,3 +407,76 @@ export function suscribirLineasBase(proyectoId: string, cb: (lbs: LineaBase[]) =
 export async function eliminarLineaBase(id: string): Promise<void> {
   await deleteDoc(doc(db, 'lineas_base', id))
 }
+
+// ─── Comentarios ──────────────────────────────────────────────────────────────
+
+export async function agregarComentario(data: Omit<Comentario, 'id' | 'creadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'comentarios'), {
+    ...data,
+    creadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export function suscribirComentarios(tareaId: string, cb: (comentarios: Comentario[]) => void): () => void {
+  const q = query(collection(db, 'comentarios'), where('tareaId', '==', tareaId))
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Comentario)
+      .sort((a, b) => (a.creadoEn?.seconds ?? 0) - (b.creadoEn?.seconds ?? 0))
+    cb(list)
+  })
+}
+
+export async function eliminarComentario(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'comentarios', id))
+}
+
+// ─── Historial de cambios ─────────────────────────────────────────────────────
+
+export async function registrarCambio(data: Omit<CambioHistorial, 'id' | 'cambiadoEn'>): Promise<void> {
+  await addDoc(collection(db, 'historial_cambios'), {
+    ...data,
+    cambiadoEn: serverTimestamp(),
+  })
+}
+
+export function suscribirHistorial(tareaId: string, cb: (cambios: CambioHistorial[]) => void): () => void {
+  const q = query(collection(db, 'historial_cambios'), where('tareaId', '==', tareaId))
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as CambioHistorial)
+      .sort((a, b) => (b.cambiadoEn?.seconds ?? 0) - (a.cambiadoEn?.seconds ?? 0))
+    cb(list)
+  })
+}
+
+// ─── Plantillas ───────────────────────────────────────────────────────────────
+
+export async function guardarPlantilla(data: Omit<Plantilla, 'id' | 'creadoEn'>): Promise<string> {
+  const cleanedTareas = data.tareas.map((t) =>
+    Object.fromEntries(Object.entries(t).filter(([, v]) => v !== undefined))
+  )
+  const ref = await addDoc(collection(db, 'plantillas'), {
+    ...data,
+    tareas: cleanedTareas,
+    creadoEn: serverTimestamp(),
+  })
+  return ref.id
+}
+
+export function suscribirPlantillas(empresaId: string, cb: (plantillas: Plantilla[]) => void): () => void {
+  const q = query(collection(db, 'plantillas'), where('empresaId', '==', empresaId))
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as Plantilla)
+      .sort((a, b) => (b.creadoEn?.seconds ?? 0) - (a.creadoEn?.seconds ?? 0))
+    cb(list)
+  })
+}
+
+export async function eliminarPlantilla(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'plantillas', id))
+}
+
+export type { PlantillaTarea }

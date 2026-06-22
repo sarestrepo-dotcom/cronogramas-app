@@ -4,15 +4,17 @@ import { Timestamp, deleteField } from 'firebase/firestore'
 import {
   Plus, List, BarChart2, Table2, ArrowLeft, Circle, CheckCircle2,
   Clock, MoreVertical, Trash2, Pencil, Upload, ChevronDown, ChevronRight,
-  LayoutDashboard, Columns3, Link2, X, Filter,
+  LayoutDashboard, Columns3, Link2, X, Filter, Printer, LayoutTemplate,
+  Users, AlertTriangle, RotateCcw,
 } from 'lucide-react'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useTareas } from '@/hooks/useTareas'
 import { useAuth } from '@/hooks/useAuth'
-import { crearTarea, actualizarTarea, eliminarTarea } from '@/lib/firestore'
+import { useUndoStack } from '@/hooks/useUndoStack'
+import { crearTarea, actualizarTarea, eliminarTarea, registrarCambio } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { calcularRutaCritica } from '@/lib/criticalPath'
-import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate } from '@/lib/utils'
+import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer } from '@/lib/utils'
 import { enrichTareas, buildHierarchy } from '@/lib/hierarchyUtils'
 import type { Empresa, Tarea, EstadoTarea, TipoTarea } from '@/types'
 import { TareasTabla } from '@/components/tareas/TareasTabla'
@@ -21,11 +23,14 @@ import { TareaDetailPanel } from '@/components/tareas/TareaDetailPanel'
 import { GanttVisual } from '@/components/gantt/GanttVisual'
 import { KanbanView } from '@/components/kanban/KanbanView'
 import { ProyectoDashboard } from '@/components/proyecto/ProyectoDashboard'
+import { WorkloadView } from '@/components/proyecto/WorkloadView'
 import { ProcesarEmailModal } from '@/components/tareas/ProcesarEmailModal'
 import { LineasBaseModal } from '@/components/lineasBase/LineasBaseModal'
+import { PlantillasModal } from '@/components/plantillas/PlantillasModal'
+import { abrirVistaPDF } from '@/components/proyecto/PrintView'
 
 type TopTab = 'cronograma' | 'dashboard'
-type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt'
+type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt' | 'carga'
 
 export function ProyectoDetailPage() {
   const { empresaId, proyectoId } = useParams<{ empresaId: string; proyectoId: string }>()
@@ -35,19 +40,21 @@ export function ProyectoDetailPage() {
   const { tareas, loading } = useTareas(proyectoId ?? null)
   const navigate = useNavigate()
 
+  const { pushUndo, mensaje: undoMensaje, canUndo } = useUndoStack()
+
   const [topTab, setTopTab] = useState<TopTab>('cronograma')
   const [vista, setVista] = useState<Vista>('lista')
   const [showModal, setShowModal] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showLineasBase, setShowLineasBase] = useState(false)
+  const [showPlantillas, setShowPlantillas] = useState(false)
   const [importMsg, setImportMsg] = useState('')
   const [editTarea, setEditTarea] = useState<Tarea | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [selectedTarea, setSelectedTarea] = useState<Tarea | null>(null)
-  // Filters for cronograma views
   const [filtroResponsable, setFiltroResponsable] = useState('')
   const [filtroGrupo, setFiltroGrupo] = useState('')
   const [showProcesarEmail, setShowProcesarEmail] = useState(false)
-  const [showLineasBase, setShowLineasBase] = useState(false)
 
   const empresa = empresas.find((e) => e.id === empresaId)
   const enrichedTareas = useMemo(() => enrichTareas(tareas), [tareas])
@@ -58,6 +65,13 @@ export function ProyectoDetailPage() {
     [tareas])
   const grupos = useMemo(() => tareas.filter(t => t.tipo === 'grupo'), [tareas])
 
+  // Salud del proyecto
+  const tareasActivas = useMemo(() => enrichedTareas.filter(t => t.tipo !== 'grupo'), [enrichedTareas])
+  const vencidasCount = useMemo(() =>
+    tareasActivas.filter(t => t.estado !== 'completada' && isVencida(t.fechaFin)).length, [tareasActivas])
+  const proximasCount = useMemo(() =>
+    tareasActivas.filter(t => t.estado !== 'completada' && !isVencida(t.fechaFin) && isProximaAVencer(t.fechaFin, 3)).length, [tareasActivas])
+
   const filteredTareas = useMemo(() => {
     if (!filtroResponsable && !filtroGrupo) return enrichedTareas
     return enrichedTareas.filter(t => {
@@ -66,7 +80,6 @@ export function ProyectoDetailPage() {
         if (!todos.includes(filtroResponsable)) return false
       }
       if (filtroGrupo) {
-        // Show the grupo itself and its children
         if (t.id === filtroGrupo) return true
         if (t.parentId !== filtroGrupo) return false
       }
@@ -80,7 +93,6 @@ export function ProyectoDetailPage() {
     if (empresa) setEmpresaActiva(empresa)
   }, [empresa])
 
-  // Sync derived estado/progreso/fechas back to Firestore for grupos
   useEffect(() => {
     if (tareas.length === 0) return
     for (const enriched of enrichedTareas) {
@@ -103,8 +115,56 @@ export function ProyectoDetailPage() {
     }
   }, [enrichedTareas])
 
+  // Wrapper con undo + historial para cambios de estado
+  const handleStatusChange = async (id: string, estado: EstadoTarea) => {
+    const tarea = enrichedTareas.find(t => t.id === id)
+    if (tarea) {
+      pushUndo({
+        label: `Estado de "${tarea.titulo}"`,
+        fn: () => actualizarTarea(id, { estado: tarea.estado, progreso: tarea.progreso }),
+      })
+      await registrarCambio({
+        tareaId: id,
+        proyectoId: proyectoId!,
+        campo: 'estado',
+        valorAnterior: ESTADO_LABELS[tarea.estado],
+        valorNuevo: ESTADO_LABELS[estado],
+        cambiadoPor: user!.uid,
+        cambiadoPorNombre: user!.displayName ?? user!.email ?? 'Usuario',
+      })
+    }
+    await actualizarTarea(id, { estado })
+  }
+
+  // Wrapper con undo para cambios de fecha en Gantt
+  const handleGanttUpdate = async (id: string, inicio: Date, fin: Date) => {
+    const tarea = enrichedTareas.find(t => t.id === id)
+    if (tarea) {
+      pushUndo({
+        label: `Fechas de "${tarea.titulo}"`,
+        fn: () => actualizarTarea(id, { fechaInicio: tarea.fechaInicio, fechaFin: tarea.fechaFin }),
+      })
+    }
+    await actualizarTarea(id, {
+      fechaInicio: Timestamp.fromDate(inicio),
+      fechaFin: Timestamp.fromDate(fin),
+    })
+    const updates = await aplicarCascada(tareas, id, fin)
+    if (updates.length > 0) {
+      setImportMsg(`↳ ${updates.length} tarea${updates.length > 1 ? 's' : ''} ajustada${updates.length > 1 ? 's' : ''} por dependencia`)
+      setTimeout(() => setImportMsg(''), 4000)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
+      {/* Toast undo */}
+      {undoMensaje && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
+          <RotateCcw size={14} /> {undoMensaje}
+        </div>
+      )}
+
       {/* Topbar */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-10 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -115,6 +175,29 @@ export function ProyectoDetailPage() {
             <h1 className="font-semibold text-slate-900">Proyecto</h1>
             <p className="text-xs text-slate-500">{tareas.length} tarea{tareas.length !== 1 ? 's' : ''}</p>
           </div>
+          {/* Salud del proyecto */}
+          {!loading && tareas.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {vencidasCount > 0 ? (
+                <span className="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+                  <AlertTriangle size={11} /> {vencidasCount} vencida{vencidasCount !== 1 ? 's' : ''}
+                </span>
+              ) : proximasCount > 0 ? (
+                <span className="flex items-center gap-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                  <Clock size={11} /> {proximasCount} vence{proximasCount !== 1 ? 'n' : ''} pronto
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                  <CheckCircle2 size={11} /> Al día
+                </span>
+              )}
+              {canUndo && (
+                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                  Ctrl+Z para deshacer
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -147,6 +230,7 @@ export function ProyectoDetailPage() {
                   ['tabla',  <Table2 size={13} />,  'Tabla'],
                   ['kanban', <Columns3 size={13} />, 'Kanban'],
                   ['gantt',  <BarChart2 size={13} />, 'Gantt'],
+                  ['carga',  <Users size={13} />,   'Carga'],
                 ] as [Vista, React.ReactNode, string][]).map(([v, icon, label]) => (
                   <button key={v} onClick={() => setVista(v)}
                     className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
@@ -164,6 +248,14 @@ export function ProyectoDetailPage() {
                 className="flex items-center gap-2 border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
                 <BarChart2 size={14} /> Líneas base
               </button>
+              <button onClick={() => setShowPlantillas(true)}
+                className="flex items-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
+                <LayoutTemplate size={14} /> Plantillas
+              </button>
+              <button onClick={() => abrirVistaPDF(enrichedTareas, undefined)}
+                className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
+                <Printer size={14} /> PDF
+              </button>
               <button onClick={() => setShowProcesarEmail(true)}
                 className="flex items-center gap-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-medium px-3 py-2 rounded-xl transition-colors">
                 <ChevronRight size={14} /> Procesar email
@@ -179,7 +271,7 @@ export function ProyectoDetailPage() {
       </div>
 
       {/* Filter bar (cronograma only) */}
-      {topTab === 'cronograma' && (responsables.length > 0 || grupos.length > 0) && (
+      {topTab === 'cronograma' && vista !== 'carga' && (responsables.length > 0 || grupos.length > 0) && (
         <div className="flex items-center gap-3 px-6 py-2 border-b border-slate-100 bg-white flex-shrink-0 flex-wrap">
           <Filter size={13} className="text-slate-400" />
           <select value={filtroResponsable} onChange={e => setFiltroResponsable(e.target.value)}
@@ -212,6 +304,8 @@ export function ProyectoDetailPage() {
           <div className="flex items-center justify-center h-64">
             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : vista === 'carga' ? (
+          <WorkloadView tareas={enrichedTareas} />
         ) : tareas.length === 0 && vista !== 'tabla' ? (
           <EmptyTareas onNew={() => setShowModal(true)} onImport={() => setShowImport(true)} />
         ) : vista === 'tabla' ? (
@@ -226,7 +320,7 @@ export function ProyectoDetailPage() {
         ) : vista === 'kanban' ? (
           <KanbanView
             tareas={filteredTareas}
-            onStatusChange={async (id, estado) => await actualizarTarea(id, { estado })}
+            onStatusChange={handleStatusChange}
             onRowClick={(t) => setSelectedTarea(t)}
           />
         ) : vista === 'lista' ? (
@@ -238,24 +332,14 @@ export function ProyectoDetailPage() {
             onMenuClose={() => setMenuOpen(null)}
             onEdit={(t) => { setEditTarea(t); setShowModal(true) }}
             onDelete={async (id) => { if (confirm('¿Eliminar tarea?')) await eliminarTarea(id) }}
-            onStatusChange={async (id, estado) => await actualizarTarea(id, { estado })}
+            onStatusChange={handleStatusChange}
             onRowClick={(t) => setSelectedTarea(t)}
           />
         ) : (
           <GanttVisual
             tareas={filteredTareas}
             rutaCritica={rutaCritica}
-            onUpdate={async (id, inicio, fin) => {
-              await actualizarTarea(id, {
-                fechaInicio: Timestamp.fromDate(inicio),
-                fechaFin: Timestamp.fromDate(fin),
-              })
-              const updates = await aplicarCascada(tareas, id, fin)
-              if (updates.length > 0) {
-                setImportMsg(`↳ ${updates.length} tarea${updates.length > 1 ? 's' : ''} ajustada${updates.length > 1 ? 's' : ''} por dependencia`)
-                setTimeout(() => setImportMsg(''), 4000)
-              }
-            }}
+            onUpdate={handleGanttUpdate}
             onTareaClick={(t) => setSelectedTarea(t)}
             onReparent={async (taskId, newParentId) => {
               await actualizarTarea(taskId, { parentId: newParentId ?? undefined })
@@ -296,7 +380,7 @@ export function ProyectoDetailPage() {
           onClose={() => setSelectedTarea(null)}
           onEdit={(t) => { setSelectedTarea(null); setEditTarea(t); setShowModal(true) }}
           onDelete={async (id) => { await eliminarTarea(id) }}
-          onStatusChange={async (id, estado) => await actualizarTarea(id, { estado })}
+          onStatusChange={handleStatusChange}
         />
       )}
 
@@ -340,6 +424,22 @@ export function ProyectoDetailPage() {
           onClose={() => setShowLineasBase(false)}
         />
       )}
+
+      {/* Modal plantillas */}
+      {showPlantillas && proyectoId && empresaId && (
+        <PlantillasModal
+          empresaId={empresaId}
+          proyectoId={proyectoId}
+          uid={user!.uid}
+          tareas={enrichedTareas}
+          onClose={() => setShowPlantillas(false)}
+          onAplicada={(count) => {
+            setShowPlantillas(false)
+            setImportMsg(`✓ ${count} tarea${count !== 1 ? 's' : ''} creada${count !== 1 ? 's' : ''} desde plantilla`)
+            setTimeout(() => setImportMsg(''), 4000)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -372,7 +472,6 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
       {(() => {
         let currentFase: string | null = null
         return rows.map((row, rowIdx) => {
-        // Fase section header
         if (row.kind === 'fase_header') {
           currentFase = row.label
           const isFaseCollapsed = collapsedFases.has(row.label)
@@ -397,10 +496,8 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
         const isGrupo = tarea.tipo === 'grupo'
         const isCollapsed = collapsed.has(tarea.id)
 
-        // Hide rows belonging to a collapsed fase
         if (currentFase && collapsedFases.has(currentFase)) return null
 
-        // Hide children if parent is collapsed
         if (nivel > 0) {
           const parent = tareas.find((t) => t.id === tarea.parentId)
           if (parent && collapsed.has(parent.id)) return null
@@ -409,7 +506,6 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
         if (isGrupo) {
           return (
             <div key={tarea.id} className="mt-4 first:mt-0">
-              {/* Group header */}
               <div className="flex items-center gap-2 mb-1.5 px-2">
                 <button onClick={() => toggleCollapse(tarea.id)} className="text-slate-400 hover:text-slate-600">
                   {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
@@ -422,22 +518,17 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
                   ▶ {tarea.titulo}
                 </span>
                 <span className="text-xs text-slate-400">{tarea.progreso}%</span>
-                {/* Thin progress bar */}
                 <div className="w-20 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                   <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${tarea.progreso}%` }} />
                 </div>
               </div>
-              {/* Children area */}
               {!isCollapsed && (
-                <div className="ml-6 space-y-1.5 pl-3 border-l-2 border-slate-200">
-                  {/* Children rendered by subsequent rows */}
-                </div>
+                <div className="ml-6 space-y-1.5 pl-3 border-l-2 border-slate-200" />
               )}
             </div>
           )
         }
 
-        // Regular task / hito row (with indent if child)
         return (
           <div key={tarea.id} style={{ paddingLeft: nivel > 0 ? 28 : 0 }}>
             <TareaRow
@@ -479,7 +570,6 @@ function TareaRow({ tarea, menuOpen, esCritica, onMenuToggle, onMenuClose, onEdi
       onClick={onClick}
       className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-4 hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer"
     >
-      {/* Status toggle */}
       <div className="relative flex-shrink-0" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => setShowEstados(!showEstados)} className="text-slate-400 hover:text-indigo-500 transition-colors">
           {tarea.estado === 'completada' ? <CheckCircle2 size={20} className="text-emerald-500" /> : <Circle size={20} />}
@@ -499,7 +589,6 @@ function TareaRow({ tarea, menuOpen, esCritica, onMenuToggle, onMenuClose, onEdi
         )}
       </div>
 
-      {/* Title + meta */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           {esCritica && (
@@ -533,12 +622,10 @@ function TareaRow({ tarea, menuOpen, esCritica, onMenuToggle, onMenuClose, onEdi
         </div>
       </div>
 
-      {/* Prioridad */}
       <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full hidden sm:inline-flex', prioridadColor.bg, prioridadColor.text)}>
         {tarea.prioridad}
       </span>
 
-      {/* Menu */}
       <div className="relative flex-shrink-0">
         <button onClick={onMenuToggle} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg">
           <MoreVertical size={15} />
@@ -605,9 +692,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
   const [notas, setNotas] = useState(tarea?.notas ?? '')
   const [saving, setSaving] = useState(false)
 
-  // Extract unique fases already used in the project for autocomplete
   const fasesExistentes = [...new Set(tareas.map(t => t.fase).filter(Boolean) as string[])].sort()
-
   const posiblesParents = tareas.filter((t) => t.id !== tarea?.id && (t.tipo === 'grupo' || !t.parentId))
   const posiblesDependencias = tareas.filter((t) => t.id !== tarea?.id)
 
@@ -667,7 +752,6 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
         <h2 className="text-lg font-semibold text-slate-900">{tarea ? 'Editar tarea' : 'Nueva tarea'}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Tipo */}
           <FormField label="Tipo">
             <div className="flex gap-2">
               {([['tarea', '— Tarea', 'bg-slate-100 text-slate-700'], ['grupo', '▶ Grupo / Fase', 'bg-indigo-100 text-indigo-700'], ['hito', '◆ Hito', 'bg-rose-100 text-rose-700']] as [TipoTarea, string, string][]).map(([val, label, cls]) => (
@@ -679,32 +763,17 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             </div>
           </FormField>
 
-          {/* Fase */}
           <FormField label="Fase (opcional)">
             {fasesExistentes.length > 0 ? (
               <div className="space-y-1.5">
-                <select
-                  className="input-base"
-                  value={fasesExistentes.includes(fase) ? fase : ''}
-                  onChange={(e) => setFase(e.target.value)}
-                >
+                <select className="input-base" value={fasesExistentes.includes(fase) ? fase : ''} onChange={(e) => setFase(e.target.value)}>
                   <option value="">— Sin fase / escribir abajo</option>
                   {fasesExistentes.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
-                <input
-                  className="input-base text-xs"
-                  value={fase}
-                  onChange={(e) => setFase(e.target.value)}
-                  placeholder="O escribe una fase nueva..."
-                />
+                <input className="input-base text-xs" value={fase} onChange={(e) => setFase(e.target.value)} placeholder="O escribe una fase nueva..." />
               </div>
             ) : (
-              <input
-                className="input-base"
-                value={fase}
-                onChange={(e) => setFase(e.target.value)}
-                placeholder="Ej: F1 - Cimentar"
-              />
+              <input className="input-base" value={fase} onChange={(e) => setFase(e.target.value)} placeholder="Ej: F1 - Cimentar" />
             )}
           </FormField>
 
@@ -717,15 +786,12 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             <textarea className="input-base resize-none" rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} />
           </FormField>
 
-          {/* Tarea padre (solo si no es grupo) */}
           {tipo !== 'grupo' && posiblesParents.length > 0 && (
             <FormField label="Tarea padre (opcional)">
               <select className="input-base" value={parentId} onChange={(e) => setParentId(e.target.value)}>
                 <option value="">— Sin padre (tarea raíz)</option>
                 {posiblesParents.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.tipo === 'grupo' ? '▶ ' : ''}{p.titulo}
-                  </option>
+                  <option key={p.id} value={p.id}>{p.tipo === 'grupo' ? '▶ ' : ''}{p.titulo}</option>
                 ))}
               </select>
             </FormField>
@@ -766,7 +832,6 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             </FormField>
           )}
 
-          {/* Responsable(s) */}
           <FormField label="Responsable(s) (opcional)">
             <div className="space-y-2">
               {responsables.length > 0 && (
@@ -774,21 +839,16 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
                   {responsables.map((r, i) => (
                     <span key={i} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-1 rounded-full">
                       {r}
-                      <button type="button"
-                        onClick={() => setResponsables(responsables.filter((_, j) => j !== i))}
+                      <button type="button" onClick={() => setResponsables(responsables.filter((_, j) => j !== i))}
                         className="text-indigo-400 hover:text-indigo-700 ml-0.5 leading-none">×</button>
                     </span>
                   ))}
                 </div>
               )}
               <div className="flex gap-2">
-                <input
-                  className="input-base flex-1"
-                  value={newResp}
-                  onChange={(e) => setNewResp(e.target.value)}
+                <input className="input-base flex-1" value={newResp} onChange={(e) => setNewResp(e.target.value)}
                   placeholder="Nombre de quien está a cargo..."
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addResp() } }}
-                />
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addResp() } }} />
                 {newResp.trim() && (
                   <button type="button" onClick={addResp}
                     className="flex-shrink-0 px-3 py-2 text-sm bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl transition-colors">
@@ -799,7 +859,6 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             </div>
           </FormField>
 
-          {/* Dependencias */}
           {posiblesDependencias.length > 0 && (
             <FormField label="Depende de (opcional)">
               <div className="border border-slate-200 rounded-xl max-h-36 overflow-y-auto divide-y divide-slate-100">
@@ -817,14 +876,11 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             </FormField>
           )}
 
-          {/* Notas internas */}
           <FormField label="Notas / IA (opcional)">
-            <textarea className="input-base resize-none" rows={2} value={notas}
-              onChange={(e) => setNotas(e.target.value)}
+            <textarea className="input-base resize-none" rows={2} value={notas} onChange={(e) => setNotas(e.target.value)}
               placeholder="Notas internas, contexto de IA, acuerdos..." />
           </FormField>
 
-          {/* Links y entregables */}
           <FormField label="Links y entregables (opcional)">
             <div className="space-y-2">
               {links.map((link, i) => (
@@ -837,20 +893,15 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
                 </div>
               ))}
               <div className="flex gap-2">
-                <input
-                  className="input-base flex-1"
-                  value={newLink}
-                  onChange={e => setNewLink(e.target.value)}
-                  placeholder="https://..."
-                  type="url"
+                <input className="input-base flex-1" value={newLink} onChange={e => setNewLink(e.target.value)}
+                  placeholder="https://..." type="url"
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
                       const v = newLink.trim()
                       if (v) { setLinks([...links, v]); setNewLink('') }
                     }
-                  }}
-                />
+                  }} />
                 <button type="button"
                   onClick={() => { const v = newLink.trim(); if (v) { setLinks([...links, v]); setNewLink('') } }}
                   className="flex items-center gap-1 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors">

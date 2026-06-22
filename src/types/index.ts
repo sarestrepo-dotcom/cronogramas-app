@@ -118,6 +118,52 @@ export interface TareaNuevaPropuesta {
   aplicar: boolean
 }
 
+export interface Comentario {
+  id: string
+  tareaId: string
+  proyectoId: string
+  texto: string
+  autorId: string
+  autorNombre: string
+  creadoEn: Timestamp
+}
+
+export interface CambioHistorial {
+  id: string
+  tareaId: string
+  proyectoId: string
+  campo: string
+  valorAnterior: string
+  valorNuevo: string
+  cambiadoPor: string
+  cambiadoPorNombre: string
+  cambiadoEn: Timestamp
+}
+
+export interface PlantillaTarea {
+  titulo: string
+  descripcion?: string
+  tipo?: TipoTarea
+  fase?: string
+  parentIndex?: number
+  asignadosA?: string[]
+  prioridad?: Tarea['prioridad']
+  duracionDias: number
+  offsetDesdeInicio: number
+  dependenciasIndexes?: number[]
+}
+
+export interface Plantilla {
+  id: string
+  empresaId: string
+  nombre: string
+  descripcion?: string
+  creadoPor: string
+  creadoEn: Timestamp
+  tareas: PlantillaTarea[]
+  duracionTotalDias: number
+}
+
 export interface TareaSnapshot {
   tareaId: string
   titulo: string

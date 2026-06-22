@@ -104,5 +104,25 @@ service cloud.firestore {
       allow create: if isSignedIn() && isMiembroProyecto(request.resource.data.proyectoId);
       allow update, delete: if isSignedIn() && isMiembroProyecto(resource.data.proyectoId);
     }
+
+    // Comentarios de tareas
+    match /comentarios/{cId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.autorId == request.auth.uid;
+    }
+
+    // Historial de cambios
+    match /historial_cambios/{hId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+    }
+
+    // Plantillas de proyectos
+    match /plantillas/{pId} {
+      allow read: if isSignedIn() && resource.data.empresaId in get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.empresas;
+      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
+      allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+    }
   }
 }
