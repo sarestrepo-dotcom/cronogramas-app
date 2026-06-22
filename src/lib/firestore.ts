@@ -383,8 +383,12 @@ export function suscribirPermitidos(cb: (lista: UsuarioPermitido[]) => void): ()
 // ─── Líneas Base ──────────────────────────────────────────────────────────────
 
 export async function guardarLineaBase(data: Omit<LineaBase, 'id' | 'creadoEn'>): Promise<string> {
+  const cleanedTareas = data.tareas.map((t) =>
+    Object.fromEntries(Object.entries(t).filter(([, v]) => v !== undefined))
+  )
   const ref = await addDoc(collection(db, 'lineas_base'), {
     ...data,
+    tareas: cleanedTareas,
     creadoEn: serverTimestamp(),
   })
   return ref.id

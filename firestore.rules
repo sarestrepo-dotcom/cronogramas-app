@@ -97,5 +97,12 @@ service cloud.firestore {
     match /email_config/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
+
+    // Líneas base
+    match /lineas_base/{lbId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isMiembroProyecto(request.resource.data.proyectoId);
+      allow update, delete: if isSignedIn() && isMiembroProyecto(resource.data.proyectoId);
+    }
   }
 }
