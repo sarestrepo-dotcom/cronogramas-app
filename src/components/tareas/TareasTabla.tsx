@@ -165,11 +165,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
       update = { fechaFin: Timestamp.fromDate(d) }
     }
     else if (field === 'prioridad') update = { prioridad: editValue as Tarea['prioridad'] }
-    else if (field === 'estado') {
-      const newEstado = editValue as EstadoTarea
-      const newProgreso = newEstado === 'completada' ? 100 : newEstado === 'pendiente' ? 0 : tarea.progreso
-      update = { estado: newEstado, progreso: newProgreso }
-    }
+    else if (field === 'estado') update = { estado: editValue as EstadoTarea }
     else if (field === 'progreso') update = { progreso: Math.min(100, Math.max(0, Number(editValue))) }
     else if (field === 'responsable') update = { asignadoA: editValue.trim() || undefined }
     else if (field === 'notas') update = { notas: editValue.trim() || undefined }

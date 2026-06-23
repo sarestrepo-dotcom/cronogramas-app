@@ -98,7 +98,6 @@ export function ProyectoDetailPage() {
   // Wrapper con undo + historial para cambios de estado
   const handleStatusChange = async (id: string, estado: EstadoTarea) => {
     const tarea = enrichedTareas.find(t => t.id === id)
-    const progresoNuevo = estado === 'completada' ? 100 : estado === 'pendiente' ? 0 : tarea?.progreso ?? 0
     if (tarea) {
       pushUndo({
         label: `Estado de "${tarea.titulo}"`,
@@ -114,7 +113,7 @@ export function ProyectoDetailPage() {
         cambiadoPorNombre: user!.displayName ?? user!.email ?? 'Usuario',
       })
     }
-    await actualizarTarea(id, { estado, progreso: progresoNuevo })
+    await actualizarTarea(id, { estado })
   }
 
   // Wrapper con undo para cambios de fecha en Gantt
@@ -818,12 +817,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
           </div>
           <div className="grid grid-cols-2 gap-4">
             <FormField label="Estado">
-              <select className="input-base" value={estado} onChange={(e) => {
-                const nuevoEstado = e.target.value as EstadoTarea
-                setEstado(nuevoEstado)
-                if (nuevoEstado === 'completada') setProgreso(100)
-                else if (nuevoEstado === 'pendiente') setProgreso(0)
-              }}>
+              <select className="input-base" value={estado} onChange={(e) => setEstado(e.target.value as EstadoTarea)}>
                 <option value="pendiente">Pendiente</option>
                 <option value="en_progreso">En progreso</option>
                 <option value="completada">Completada</option>
