@@ -94,27 +94,6 @@ export function ProyectoDetailPage() {
     if (empresa) setEmpresaActiva(empresa)
   }, [empresa])
 
-  useEffect(() => {
-    if (tareas.length === 0) return
-    for (const enriched of enrichedTareas) {
-      if (enriched.tipo !== 'grupo') continue
-      const original = tareas.find((t) => t.id === enriched.id)
-      if (!original) continue
-      const changed =
-        original.progreso !== enriched.progreso ||
-        original.estado !== enriched.estado ||
-        original.fechaInicio?.seconds !== enriched.fechaInicio?.seconds ||
-        original.fechaFin?.seconds !== enriched.fechaFin?.seconds
-      if (changed) {
-        actualizarTarea(enriched.id, {
-          progreso: enriched.progreso,
-          estado: enriched.estado,
-          fechaInicio: enriched.fechaInicio,
-          fechaFin: enriched.fechaFin,
-        })
-      }
-    }
-  }, [enrichedTareas])
 
   // Wrapper con undo + historial para cambios de estado
   const handleStatusChange = async (id: string, estado: EstadoTarea) => {
