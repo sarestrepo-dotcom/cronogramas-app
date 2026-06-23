@@ -14,6 +14,7 @@ interface TareasTablaProps {
   uid: string
   rutaCritica?: Set<string>
   onEditTarea?: (tarea: Tarea) => void
+  onRowClick?: (tarea: Tarea) => void
 }
 
 interface FilaNueva {
@@ -36,7 +37,7 @@ const PRIORIDAD_STYLES: Record<Tarea['prioridad'], string> = {
   critica: 'bg-red-100 text-red-700',
 }
 
-export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, onEditTarea }: TareasTablaProps) {
+export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, onEditTarea, onRowClick }: TareasTablaProps) {
   const today = new Date().toISOString().split('T')[0]
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -389,7 +390,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                           <span title="Ruta crítica" className="flex-shrink-0 w-2 h-2 rounded-full bg-red-500" />
                         )}
                         <span
-                          onClick={() => onEditTarea ? onEditTarea(tarea) : startEdit(tarea.id, 'titulo', tarea.titulo)}
+                          onClick={() => onRowClick ? onRowClick(tarea) : onEditTarea ? onEditTarea(tarea) : startEdit(tarea.id, 'titulo', tarea.titulo)}
                           className={cn('cursor-pointer block truncate hover:text-indigo-600 underline decoration-dotted underline-offset-2 decoration-slate-300 hover:decoration-indigo-400',
                             isGrupo ? 'font-semibold text-slate-800' : 'text-slate-900')}
                         >
