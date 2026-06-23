@@ -323,7 +323,6 @@ export function ProyectoDetailPage() {
             uid={user!.uid}
             rutaCritica={rutaCritica}
             onEditTarea={(t) => { setEditTarea(t); setShowModal(true) }}
-            onRowClick={(t) => setSelectedTarea(t)}
           />
         ) : vista === 'kanban' ? (
           <KanbanView
@@ -338,7 +337,7 @@ export function ProyectoDetailPage() {
             rutaCritica={rutaCritica}
             onMenuToggle={(id) => setMenuOpen(menuOpen === id ? null : id)}
             onMenuClose={() => setMenuOpen(null)}
-            onEdit={(t) => setSelectedTarea(t)}
+            onEdit={(t) => { setEditTarea(t); setShowModal(true) }}
             onDelete={async (id) => { if (confirm('¿Eliminar tarea?')) await eliminarTarea(id) }}
             onStatusChange={handleStatusChange}
             onRowClick={(t) => setSelectedTarea(t)}
