@@ -110,15 +110,14 @@ export async function listarTodasLasEmpresas(): Promise<Empresa[]> {
 // ─── Proyectos ────────────────────────────────────────────────────────────────
 
 export async function crearProyecto(data: Omit<Proyecto, 'id' | 'creadoEn'>): Promise<string> {
-  const ref = await addDoc(collection(db, 'proyectos'), {
-    ...data,
-    creadoEn: serverTimestamp(),
-  })
+  const clean = Object.fromEntries(Object.entries({ ...data, creadoEn: serverTimestamp() }).filter(([, v]) => v !== undefined))
+  const ref = await addDoc(collection(db, 'proyectos'), clean)
   return ref.id
 }
 
 export async function actualizarProyecto(id: string, data: Partial<Proyecto>) {
-  await updateDoc(doc(db, 'proyectos', id), data as DocumentData)
+  const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined))
+  await updateDoc(doc(db, 'proyectos', id), clean as DocumentData)
 }
 
 export async function eliminarProyecto(id: string) {
