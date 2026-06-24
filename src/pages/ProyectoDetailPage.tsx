@@ -248,8 +248,8 @@ export function ProyectoDetailPage() {
                 </button>
                 {showHerramientas && (
                   <>
-                    <div className="fixed inset-0 z-10" onClick={() => setShowHerramientas(false)} />
-                    <div className="absolute right-0 top-10 z-20 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 w-52">
+                    <div className="fixed inset-0 z-40" onClick={() => setShowHerramientas(false)} />
+                    <div className="absolute right-0 top-10 z-50 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 w-52">
                       <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Versiones</p>
                       <button onClick={() => { setShowLineasBase(true); setShowHerramientas(false) }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
