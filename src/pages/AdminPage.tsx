@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import {
   Users, UserPlus, Trash2, X, CheckCircle2, XCircle,
-  Crown, User, Building2, ChevronRight,
+  Crown, User, Building2, ChevronRight, Tag, Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
 import {
   suscribirPermitidos, crearPermiso, actualizarPermiso, eliminarPermiso,
-  suscribirEmpresasDeUsuario, buscarUsuarioPorEmail,
+  suscribirEmpresasDeUsuario, buscarUsuarioPorEmail, upsertUsuario,
   agregarMiembroEmpresa, removerMiembroEmpresa,
 } from '@/lib/firestore'
 import type { Empresa, UsuarioPermitido } from '@/types'
@@ -17,7 +17,8 @@ export function AdminPage() {
   const [permitidos, setPermitidos]   = useState<UsuarioPermitido[]>([])
   const [showAdd, setShowAdd]         = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
-  const [gestionando, setGestionando] = useState<UsuarioPermitido | null>(null)
+  const [gestionando, setGestionando]     = useState<UsuarioPermitido | null>(null)
+  const [editandoAlias, setEditandoAlias] = useState<UsuarioPermitido | null>(null)
   const [saving, setSaving]           = useState<string | null>(null)
 
   useEffect(() => suscribirPermitidos(setPermitidos), [])
@@ -170,15 +171,24 @@ export function AdminPage() {
 
                     {/* Acciones */}
                     <td className="px-5 py-4">
-                      {!isMe && (
+                      <div className="flex items-center gap-1">
                         <button
-                          onClick={() => setConfirmDelete(p.email)}
-                          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Eliminar acceso"
+                          onClick={() => setEditandoAlias(p)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Gestionar aliases"
                         >
-                          <Trash2 size={14} />
+                          <Tag size={14} />
                         </button>
-                      )}
+                        {!isMe && (
+                          <button
+                            onClick={() => setConfirmDelete(p.email)}
+                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Eliminar acceso"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -228,6 +238,14 @@ export function AdminPage() {
         <GestionarEmpresasModal
           permiso={gestionando}
           onClose={() => setGestionando(null)}
+        />
+      )}
+
+      {/* Gestionar aliases modal */}
+      {editandoAlias && (
+        <AliasesModal
+          permiso={editandoAlias}
+          onClose={() => setEditandoAlias(null)}
         />
       )}
     </div>
@@ -475,6 +493,131 @@ function AgregarUsuarioModal({ onClose, uid, existing }: {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Aliases modal ────────────────────────────────────────────────────────────
+
+function AliasesModal({ permiso, onClose }: { permiso: UsuarioPermitido; onClose: () => void }) {
+  const [aliases, setAliases] = useState<string[]>([])
+  const [uid, setUid]         = useState<string | null>(null)
+  const [nuevo, setNuevo]     = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [saved, setSaved]     = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    buscarUsuarioPorEmail(permiso.email).then(u => {
+      setUid(u?.uid ?? null)
+      setAliases(u?.aliases ?? [])
+      setLoading(false)
+    })
+  }, [permiso.email])
+
+  const agregar = () => {
+    const trimmed = nuevo.trim()
+    if (!trimmed || aliases.includes(trimmed)) { setNuevo(''); return }
+    setAliases(prev => [...prev, trimmed])
+    setNuevo('')
+  }
+
+  const guardar = async () => {
+    if (!uid) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await upsertUsuario(uid, { aliases })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e: any) {
+      setSaveError('No se pudo guardar: ' + (e?.message ?? 'error desconocido'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+              <Tag size={15} className="text-indigo-500" /> Aliases de {permiso.nombre}
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">{permiso.email}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg">
+            <X size={18} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-6">
+            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : !uid ? (
+          <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+            Este usuario aún no ha iniciado sesión en la app. Los aliases se podrán configurar una vez que entre por primera vez.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-slate-500">
+              Agrega los nombres con que este usuario aparece como responsable en tareas importadas. "Mis tareas" los usará para mostrarle todo lo suyo.
+            </p>
+
+            {/* Chips */}
+            <div className="flex flex-wrap gap-2 min-h-[32px]">
+              {[permiso.email, permiso.nombre].map(id => (
+                <span key={id} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-full">
+                  {id} <span className="text-indigo-300">·auto</span>
+                </span>
+              ))}
+              {aliases.map(a => (
+                <span key={a} className="flex items-center gap-1 text-xs bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-full">
+                  {a}
+                  <button onClick={() => setAliases(p => p.filter(x => x !== a))} className="text-slate-400 hover:text-red-500">
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+
+            {/* Input */}
+            <div className="flex gap-2">
+              <input
+                className="input-base flex-1 text-sm"
+                value={nuevo}
+                onChange={e => setNuevo(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), agregar())}
+                placeholder='Ej: "Sergio", "Marin", "s.restrepo"'
+              />
+              <button onClick={agregar} type="button"
+                className="flex items-center gap-1 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl">
+                <Plus size={14} />
+              </button>
+            </div>
+
+            {saveError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{saveError}</p>
+            )}
+
+            <div className="flex items-center gap-3 pt-1">
+              <button onClick={guardar} disabled={saving} className="btn-primary text-sm">
+                {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+              <button onClick={onClose} className="btn-secondary text-sm">Cancelar</button>
+              {saved && (
+                <span className="flex items-center gap-1.5 text-sm text-emerald-600">
+                  <CheckCircle2 size={14} /> Guardado
+                </span>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

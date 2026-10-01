@@ -6,11 +6,25 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Checks membership in an empresa document that is NOT the document being evaluated
-    function isMiembroEmpresaExterna(empresaId) {
+    // True if the user's usuarios_permitidos entry lists this empresa (granted access,
+    // independent of whether empresa.miembros has been synced for this uid yet)
+    function tienePermisoEmpresa(empresaId) {
       return isSignedIn() &&
-        exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
-        request.auth.uid in get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros;
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)) &&
+        empresaId in get(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)).data.empresas;
+    }
+
+    // Checks membership in an empresa document that is NOT the document being evaluated.
+    // Falls back to tienePermisoEmpresa so read access doesn't depend on empresa.miembros
+    // being synced yet (that sync requires the user's usuarios/{uid} doc to already exist,
+    // which only happens after their first login — see AdminPage GestionarEmpresasModal).
+    function isMiembroEmpresaExterna(empresaId) {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
+         request.auth.uid in get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros) ||
+        tienePermisoEmpresa(empresaId)
+      );
     }
 
     // Checks owner/admin role in an external empresa document
@@ -26,10 +40,16 @@ service cloud.firestore {
         request.auth.uid in get(/databases/$(database)/documents/proyectos/$(proyectoId)).data.miembros;
     }
 
-    // Usuarios
+    // Usuarios — el propio usuario puede escribir su doc; los admins globales también
+    function isGlobalAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)).data.rol == 'admin';
+    }
     match /usuarios/{uid} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && (request.auth.uid == uid || isGlobalAdmin());
     }
 
     // Empresas — allow read if uid is in miembros OR if the empresa is listed in the user's usuarios_permitidos entry
@@ -51,6 +71,8 @@ service cloud.firestore {
     //   where('empresaId', 'in', Xs)    → same
     //   where(documentId(), 'in', ids)  → uid in resource.data.miembros handles this (shared projects)
     // uid-in-miembros checked first so documentId() queries short-circuit without needing get()
+    // isMiembroEmpresaExterna also falls back to usuarios_permitidos.empresas so access doesn't
+    // depend on empresa.miembros being synced (see tienePermisoEmpresa above)
     match /proyectos/{proyectoId} {
       allow read: if isSignedIn() && (
         request.auth.uid in resource.data.miembros ||
@@ -118,11 +140,43 @@ service cloud.firestore {
       allow create: if isSignedIn();
     }
 
+    // Clientes
+    match /clientes/{cId} {
+      allow read: if isSignedIn() && isMiembroEmpresaExterna(resource.data.empresaId);
+      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
+      allow update, delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+    }
+
     // Plantillas de proyectos
     match /plantillas/{pId} {
       allow read: if isSignedIn() && resource.data.empresaId in get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.empresas;
       allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
       allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+    }
+
+    // Portales cliente — token público de solo lectura
+    match /portales/{token} {
+      allow read: if true;
+      allow write: if isSignedIn();
+
+      // Aprobaciones: el cliente puede crear/leer sin auth
+      match /aprobaciones/{hitoId} {
+        allow read: if true;
+        allow write: if true;
+      }
+
+      // Comentarios del portal: público (cliente sin cuenta)
+      match /comentarios/{cId} {
+        allow read: if true;
+        allow create: if true;
+        allow update, delete: if isSignedIn();
+      }
+
+      // Solicitudes de cambio: cliente crea, solo el equipo lee
+      match /solicitudes/{sId} {
+        allow create: if true;
+        allow read, update, delete: if isSignedIn();
+      }
     }
   }
 }

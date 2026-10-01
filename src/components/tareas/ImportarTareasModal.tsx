@@ -4,7 +4,7 @@ import {
   ClipboardPaste, Download, AlertCircle, CheckCircle2, X,
   Link, Loader2, Sheet, Sparkles, ChevronRight,
 } from 'lucide-react'
-import { crearTarea } from '@/lib/firestore'
+import { crearTarea, actualizarTarea } from '@/lib/firestore'
 import { cn } from '@/lib/utils'
 import type { Tarea, TipoTarea, EstadoTarea } from '@/types'
 
@@ -12,10 +12,11 @@ import type { Tarea, TipoTarea, EstadoTarea } from '@/types'
 type CampoImport =
   | 'titulo' | 'fechaInicio' | 'fechaFin' | 'prioridad'
   | 'tipo' | 'responsable' | 'descripcion' | 'progreso'
-  | 'fase' | 'notas' | 'estado' | 'padre' | 'ignorar'
+  | 'fase' | 'notas' | 'estado' | 'padre' | 'numero' | 'dependencia' | 'ignorar'
 
 const CAMPO_LABELS: Record<CampoImport, string> = {
   titulo:      'Título',
+  numero:      'Número (ej: 3.1)',
   fase:        'Fase',
   padre:       'Padre (título del grupo)',
   fechaInicio: 'Fecha inicio',
@@ -23,21 +24,23 @@ const CAMPO_LABELS: Record<CampoImport, string> = {
   responsable: 'Responsable',
   estado:      'Estado',
   prioridad:   'Prioridad',
-  tipo:        'Tipo (padre/hito/tarea)',
+  tipo:        'Tipo (T/S/H o grupo/tarea/hito)',
   progreso:    'Progreso %',
   notas:       'Notas / IA',
   descripcion: 'Descripción',
+  dependencia: 'Dependencia (número)',
   ignorar:     '— Ignorar',
 }
 
 const CAMPOS_ORDEN: CampoImport[] = [
-  'titulo', 'fase', 'padre', 'fechaInicio', 'fechaFin', 'responsable',
-  'estado', 'prioridad', 'tipo', 'progreso', 'notas', 'descripcion', 'ignorar',
+  'numero', 'titulo', 'tipo', 'fase', 'padre', 'fechaInicio', 'fechaFin', 'responsable',
+  'estado', 'prioridad', 'progreso', 'dependencia', 'notas', 'descripcion', 'ignorar',
 ]
 
 // ─── FilaTarea ────────────────────────────────────────────────────────────────
 interface FilaTarea {
   titulo: string
+  numero: string
   fase: string
   padre: string
   fechaInicio: string
@@ -49,6 +52,7 @@ interface FilaTarea {
   descripcion: string
   notas: string
   progreso: number
+  dependenciaRaw: string
   valida: boolean
   error?: string
 }
@@ -101,7 +105,8 @@ function validarFecha(s: string): boolean {
 
 // ─── Column detection heuristics ─────────────────────────────────────────────
 const CAMPO_KEYWORDS: Record<Exclude<CampoImport, 'ignorar'>, string[]> = {
-  titulo:      ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'item', 'concepto'],
+  numero:      ['numero', 'num', 'n', '#', 'id', 'numeracion', 'item'],
+  titulo:      ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'concepto'],
   fase:        ['fase', 'phase', 'frente', 'etapa', 'sprint', 'modulo', 'categoria'],
   padre:       ['padre', 'parent', 'grupo padre', 'tarea padre', 'pertenece a', 'grupo'],
   fechaInicio: ['inicio', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio'],
@@ -113,6 +118,7 @@ const CAMPO_KEYWORDS: Record<Exclude<CampoImport, 'ignorar'>, string[]> = {
   descripcion: ['descripcion', 'description', 'detalle', 'detail'],
   progreso:    ['progreso', 'progress', 'avance', 'porcentaje', 'percent'],
   notas:       ['notas', 'notes', 'ia', 'observaciones', 'comentarios', 'contexto', 'nota'],
+  dependencia: ['dependencia', 'dependencias', 'dependency', 'depends', 'depende', 'dep', 'predecessora', 'predecesora'],
 }
 
 function normalizar(s: string): string {
@@ -170,7 +176,8 @@ function detectarMapping(headers: string[], sep: string): Record<number, CampoIm
 
 function parsearConMapeo(line: string, sep: string, mapping: Record<number, CampoImport>): FilaTarea {
   const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ''))
-  let titulo = '', fase = '', padre = '', fechaInicio = '', fechaFin = '', responsable = '', descripcion = '', notas = ''
+  let titulo = '', numero = '', fase = '', padre = '', fechaInicio = '', fechaFin = ''
+  let responsable = '', descripcion = '', notas = '', dependenciaRaw = ''
   let prioridadRaw = '', tipoRaw = '', progresoRaw = '', estadoRaw = ''
   let hayFechaInicio = false, hayFechaFin = false
 
@@ -178,6 +185,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
     const val = cols[Number(idxStr)] ?? ''
     switch (campo) {
       case 'titulo':      titulo = val; break
+      case 'numero':      numero = val.trim(); break
       case 'fase':        fase = val; break
       case 'padre':       padre = val; break
       case 'fechaInicio': fechaInicio = parsearFecha(val); if (val.trim()) hayFechaInicio = true; break
@@ -189,6 +197,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
       case 'tipo':        tipoRaw = val; break
       case 'progreso':    progresoRaw = val.replace('%', ''); break
       case 'estado':      estadoRaw = val; break
+      case 'dependencia': dependenciaRaw = val.trim(); break
     }
   }
 
@@ -196,15 +205,15 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
   const estado: EstadoTarea = ESTADOS_MAP[estadoRaw.toLowerCase().trim()] ?? 'pendiente'
   const tipoExplicito = TIPOS_MAP[tipoRaw.toLowerCase().trim()]
   const sinFechas = !hayFechaInicio && !hayFechaFin
-  const tipo: TipoTarea = tipoExplicito ?? (sinFechas && !padre.trim() ? 'grupo' : 'tarea')
+  const tipo: TipoTarea = tipoExplicito ?? (sinFechas && !padre.trim() && !numero.includes('.') ? 'grupo' : 'tarea')
   const progreso = Math.min(100, Math.max(0, parseInt(progresoRaw) || 0))
 
   let error: string | undefined
   if (!titulo.trim()) error = 'Título requerido'
-  else if (tipo !== 'grupo' && !validarFecha(fechaInicio)) error = 'Fecha inicio inválida'
-  else if (tipo !== 'grupo' && !validarFecha(fechaFin))    error = 'Fecha fin inválida'
+  else if (tipo !== 'grupo' && hayFechaInicio && !validarFecha(fechaInicio)) error = 'Fecha inicio inválida'
+  else if (tipo !== 'grupo' && hayFechaFin    && !validarFecha(fechaFin))    error = 'Fecha fin inválida'
 
-  return { titulo, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, valida: !error, error }
+  return { titulo, numero, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, dependenciaRaw, valida: !error, error }
 }
 
 // ─── Google Sheets fetcher ────────────────────────────────────────────────────
@@ -226,10 +235,10 @@ async function fetchSheetCsv(sheetId: string, gid?: string): Promise<string> {
 
 function descargarPlantilla() {
   const contenido = [
-    'Título\tFase\tFecha inicio\tFecha fin\tEstado\tPrioridad\tTipo\tResponsable\tDescripción\tProgreso',
+    'Número\tTítulo\tTipo\tFase\tFecha inicio\tFecha fin\tEstado\tPrioridad\tResponsable\tProgreso\tDependencia\tDescripción',
     // F1 – Descubrimiento y estrategia
-    'F1 - Descubrimiento y Estrategia\tF1 - Descubrimiento y Estrategia\t02/06/2026\t20/06/2026\tcompletada\talta\tgrupo\t\t\t100',
-    'Kickoff y alineación con el cliente\tF1 - Descubrimiento y Estrategia\t02/06/2026\t03/06/2026\tcompletada\talta\thito\tSergei Restrepo\tReunión de arranque del proyecto\t100',
+    '1\tF1 - Descubrimiento y Estrategia\tgrupo\tF1 - Descubrimiento y Estrategia\t02/06/2026\t20/06/2026\tcompletada\talta\t\t100\t\t',
+    '1.1\tKickoff y alineación con el cliente\thito\tF1 - Descubrimiento y Estrategia\t02/06/2026\t03/06/2026\tcompletada\talta\tSergei Restrepo\t100\t\tReunión de arranque del proyecto',
     'Levantamiento de requerimientos\tF1 - Descubrimiento y Estrategia\t03/06/2026\t07/06/2026\tcompletada\talta\ttarea\tSergei Restrepo\tEntrevistas con stakeholders y documentación\t100',
     'Definición de arquitectura de información\tF1 - Descubrimiento y Estrategia\t08/06/2026\t12/06/2026\tcompletada\talta\ttarea\tMarín\tSitemap y flujos de navegación\t100',
     'Revisión y aprobación de requerimientos\tF1 - Descubrimiento y Estrategia\t13/06/2026\t20/06/2026\tcompletada\tmedia\thito\tSergei Restrepo\tAprobación formal del cliente\t100',
@@ -288,6 +297,8 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
   const [headers, setHeaders]       = useState<string[]>([])
   const [mapping, setMapping]       = useState<Record<number, CampoImport>>({})
   const [filas, setFilas]           = useState<FilaTarea[]>([])
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [editDraft, setEditDraft]   = useState<Partial<FilaTarea>>({})
 
   const filaValidas = filas.filter(f => f.valida)
 
@@ -376,56 +387,81 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
     setImportando(true)
     try {
       const hoy = new Date().toISOString().split('T')[0]
-      // Maps for parent resolution
-      const grupoIdByIndex = new Map<number, string>()   // index → Firestore id
-      const grupoIdByTitulo = new Map<string, string>()  // titulo.toLowerCase() → Firestore id
 
-      // First pass: create grupos and record their Firestore IDs
+      // Resolution maps
+      const idByNumero  = new Map<string, string>()  // "3.1" → Firestore id
+      const idByTitulo  = new Map<string, string>()  // titulo.lower → Firestore id
+      const idByIndex   = new Map<number, string>()  // row index → Firestore id
+      const depPendiente = new Map<number, string>() // row index → raw dependencia str
+
+      // Helper: "3.1" → "3", "3" → ""
+      const parentNum = (n: string) => { const d = n.lastIndexOf('.'); return d > 0 ? n.slice(0, d) : '' }
+
+      // Determine if a row has children (for auto-tipo via numero)
+      const conHijos = new Set(
+        filaValidas.filter(f => f.numero?.includes('.'))
+          .map(f => parentNum(f.numero))
+          .filter(Boolean)
+      )
+
+      // Single pass in sheet order — parents always come before children
       for (let i = 0; i < filaValidas.length; i++) {
         const f = filaValidas[i]
-        if (f.tipo !== 'grupo') continue
-        const id = await crearTarea({
-          titulo: f.titulo, descripcion: f.descripcion,
-          fechaInicio: toTS(f.fechaInicio || hoy, false),
-          fechaFin: toTS(f.fechaFin || f.fechaInicio || hoy, true),
-          estado: f.estado, prioridad: f.prioridad, tipo: 'grupo',
-          asignadoA: f.responsable.trim() || undefined, progreso: f.progreso,
-          fase: f.fase.trim() || undefined,
-          notas: f.notas.trim() || undefined,
-          orden: i * 1000,
-          proyectoId, empresaId, dependencias: [], creadoPor: uid,
-        } as Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>)
-        grupoIdByIndex.set(i, id)
-        grupoIdByTitulo.set(f.titulo.trim().toLowerCase(), id)
-      }
 
-      // Second pass: create non-grupo tasks preserving sheet order via `orden`
-      for (let i = 0; i < filaValidas.length; i++) {
-        const f = filaValidas[i]
-        if (f.tipo === 'grupo') continue
+        // Auto-promote to grupo if numero has children
+        let tipo = f.tipo
+        if (f.numero && tipo !== 'hito' && conHijos.has(f.numero)) tipo = 'grupo'
 
-        // Resolve parentId: explicit padre column first, then nearest grupo above
+        // Resolve parentId: numero-prefix → padre column → nearest grupo above
         let parentId: string | undefined
-        if (f.padre.trim()) {
-          parentId = grupoIdByTitulo.get(f.padre.trim().toLowerCase())
+        if (f.numero) {
+          const pNum = parentNum(f.numero)
+          if (pNum) parentId = idByNumero.get(pNum)
         }
-        if (!parentId) {
+        if (!parentId && f.padre.trim()) {
+          parentId = idByTitulo.get(f.padre.trim().toLowerCase())
+        }
+        if (!parentId && !f.numero) {
           for (let j = i - 1; j >= 0; j--) {
-            if (filaValidas[j].tipo === 'grupo') { parentId = grupoIdByIndex.get(j); break }
+            if (filaValidas[j].tipo === 'grupo') { parentId = idByIndex.get(j); break }
           }
         }
 
-        const fin = f.tipo === 'hito' ? f.fechaInicio : (f.fechaFin || f.fechaInicio)
-        await crearTarea({
+        // Responsables: comma/semicolon separated → asignadosA array
+        const responsables = f.responsable.trim()
+          ? f.responsable.split(/[,;]/).map(s => s.trim()).filter(Boolean)
+          : []
+
+        const fin = tipo === 'hito' ? f.fechaInicio : (f.fechaFin || f.fechaInicio)
+        const id = await crearTarea({
           titulo: f.titulo, descripcion: f.descripcion,
-          fechaInicio: toTS(f.fechaInicio, false), fechaFin: toTS(fin, true),
-          estado: f.estado, prioridad: f.prioridad, tipo: f.tipo, parentId,
-          asignadoA: f.responsable.trim() || undefined, progreso: f.progreso,
-          orden: i * 1000,
+          fechaInicio: toTS(f.fechaInicio || hoy, false),
+          fechaFin: toTS(fin || hoy, true),
+          estado: f.estado, prioridad: f.prioridad, tipo,
+          parentId: parentId || undefined,
+          asignadoA: responsables[0] || undefined,
+          asignadosA: responsables.length > 0 ? responsables : undefined,
+          progreso: f.progreso,
           fase: f.fase.trim() || undefined,
           notas: f.notas.trim() || undefined,
+          orden: i * 1000,
           proyectoId, empresaId, dependencias: [], creadoPor: uid,
         } as Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>)
+
+        idByIndex.set(i, id)
+        idByTitulo.set(f.titulo.trim().toLowerCase(), id)
+        if (f.numero) idByNumero.set(f.numero, id)
+        if (f.dependenciaRaw.trim()) depPendiente.set(i, f.dependenciaRaw)
+      }
+
+      // Second pass: resolve and set dependencias
+      for (const [i, depRaw] of depPendiente) {
+        const taskId = idByIndex.get(i)
+        if (!taskId) continue
+        const depIds = depRaw.split(/[,;]/).map(s => s.trim()).filter(Boolean)
+          .map(ref => idByNumero.get(ref) ?? idByTitulo.get(ref.toLowerCase()) ?? '')
+          .filter(Boolean)
+        if (depIds.length > 0) await actualizarTarea(taskId, { dependencias: depIds })
       }
 
       onImportado(filaValidas.length)
@@ -433,6 +469,29 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
     } finally {
       setImportando(false)
     }
+  }
+
+  // ── Inline row editing ───────────────────────────────────────────────────────
+  function revalidarFila(f: FilaTarea): FilaTarea {
+    let error: string | undefined
+    if (!f.titulo.trim()) error = 'Título requerido'
+    else if (f.tipo !== 'grupo' && f.fechaInicio && !validarFecha(f.fechaInicio)) error = 'Fecha inicio inválida'
+    else if (f.tipo !== 'grupo' && f.fechaFin    && !validarFecha(f.fechaFin))    error = 'Fecha fin inválida'
+    return { ...f, valida: !error, error }
+  }
+
+  const startEdit = (idx: number) => {
+    setEditDraft({ ...filas[idx] })
+    setEditingIdx(idx)
+  }
+
+  const commitEdit = () => {
+    if (editingIdx === null) return
+    setFilas(prev => prev.map((f, i) =>
+      i === editingIdx ? revalidarFila({ ...f, ...editDraft } as FilaTarea) : f
+    ))
+    setEditingIdx(null)
+    setEditDraft({})
   }
 
   // ── UI ───────────────────────────────────────────────────────────────────────
@@ -613,52 +672,155 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
                 return filas.map((fila, i) => {
                   if (fila.tipo === 'grupo' && fila.valida) lastGrupoIdx = i
                   const parentGrupo = (fila.tipo !== 'grupo' && lastGrupoIdx >= 0) ? filas[lastGrupoIdx] : null
+                  const isEditing = editingIdx === i
                   return (
-                    <div key={i} className={cn('flex items-start gap-3 p-3 rounded-xl border text-sm',
-                      parentGrupo ? 'ml-6' : '',
-                      fila.valida ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200')}>
-                      <div className="flex-shrink-0 mt-0.5">
-                        {fila.valida
-                          ? <CheckCircle2 size={16} className="text-emerald-500" />
-                          : <AlertCircle  size={16} className="text-red-500" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className={cn('font-medium truncate', fila.valida ? 'text-slate-900' : 'text-red-700')}>
-                            {fila.titulo || '(sin título)'}
-                          </p>
-                          <span className={cn('text-xs px-1.5 py-0.5 rounded-full capitalize font-medium',
-                            fila.tipo === 'grupo' ? 'bg-indigo-100 text-indigo-700' :
-                            fila.tipo === 'hito'  ? 'bg-rose-100 text-rose-700' :
-                            'bg-slate-100 text-slate-600')}>
-                            {fila.tipo === 'grupo' ? '▶ grupo' : fila.tipo === 'hito' ? '◆ hito' : '— tarea'}
-                          </span>
-                          {parentGrupo && (
-                            <span className="text-xs text-indigo-500">↳ {parentGrupo.titulo}</span>
-                          )}
+                    <div key={i} className={cn('rounded-xl border text-sm',
+                      parentGrupo && !isEditing ? 'ml-6' : '',
+                      fila.valida ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200',
+                      isEditing && 'border-indigo-300 bg-indigo-50/30 ring-1 ring-indigo-200')}>
+
+                      {/* Row summary line */}
+                      <div className="flex items-start gap-3 p-3">
+                        <div className="flex-shrink-0 mt-0.5">
+                          {fila.valida
+                            ? <CheckCircle2 size={16} className="text-emerald-500" />
+                            : <AlertCircle  size={16} className="text-red-500" />}
                         </div>
-                        {fila.valida ? (
-                          <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-2">
-                            {fila.fase && <span className="text-indigo-600 font-medium">{fila.fase}</span>}
-                            {fila.fechaInicio && <span>{fila.fechaInicio} → {fila.fechaFin}</span>}
-                            <span className={cn('px-1.5 py-0.5 rounded-full font-medium',
-                              fila.estado === 'completada'  ? 'bg-emerald-100 text-emerald-700' :
-                              fila.estado === 'en_progreso' ? 'bg-blue-100 text-blue-700' :
-                              fila.estado === 'bloqueada'   ? 'bg-red-100 text-red-700' :
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className={cn('font-medium truncate', fila.valida ? 'text-slate-900' : 'text-red-700')}>
+                              {fila.titulo || '(sin título)'}
+                            </p>
+                            <span className={cn('text-xs px-1.5 py-0.5 rounded-full capitalize font-medium',
+                              fila.tipo === 'grupo' ? 'bg-indigo-100 text-indigo-700' :
+                              fila.tipo === 'hito'  ? 'bg-rose-100 text-rose-700' :
                               'bg-slate-100 text-slate-600')}>
-                              {fila.estado === 'en_progreso' ? 'En progreso' :
-                               fila.estado === 'completada'  ? 'Completada' :
-                               fila.estado === 'bloqueada'   ? 'Bloqueada' : 'Pendiente'}
+                              {fila.tipo === 'grupo' ? '▶ grupo' : fila.tipo === 'hito' ? '◆ hito' : '— tarea'}
                             </span>
-                            <span>· {fila.prioridad}</span>
-                            {fila.responsable && <span>· 👤 {fila.responsable}</span>}
-                            {fila.progreso > 0 && <span>· {fila.progreso}%</span>}
-                            {fila.notas && <span>· 📝 {fila.notas.slice(0, 40)}{fila.notas.length > 40 ? '…' : ''}</span>}
-                          </p>
+                            {parentGrupo && (
+                              <span className="text-xs text-indigo-500">↳ {parentGrupo.titulo}</span>
+                            )}
+                          </div>
+                          {fila.valida && !isEditing ? (
+                            <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap gap-x-2">
+                              {fila.fase && <span className="text-indigo-600 font-medium">{fila.fase}</span>}
+                              {fila.fechaInicio
+                                ? <span>{fila.fechaInicio} → {fila.fechaFin || '?'}</span>
+                                : fila.tipo !== 'grupo' && <span className="text-amber-500 font-medium">Sin fechas · depende de predecesor</span>
+                              }
+                              <span className={cn('px-1.5 py-0.5 rounded-full font-medium',
+                                fila.estado === 'completada'  ? 'bg-emerald-100 text-emerald-700' :
+                                fila.estado === 'en_progreso' ? 'bg-blue-100 text-blue-700' :
+                                fila.estado === 'bloqueada'   ? 'bg-red-100 text-red-700' :
+                                'bg-slate-100 text-slate-600')}>
+                                {fila.estado === 'en_progreso' ? 'En progreso' :
+                                 fila.estado === 'completada'  ? 'Completada' :
+                                 fila.estado === 'bloqueada'   ? 'Bloqueada' : 'Pendiente'}
+                              </span>
+                              <span>· {fila.prioridad}</span>
+                              {fila.responsable && <span>· 👤 {fila.responsable}</span>}
+                              {fila.progreso > 0 && <span>· {fila.progreso}%</span>}
+                              {fila.notas && <span>· 📝 {fila.notas.slice(0, 40)}{fila.notas.length > 40 ? '…' : ''}</span>}
+                            </p>
+                          ) : !isEditing ? (
+                            <p className="text-xs text-red-600 mt-0.5">{fila.error}</p>
+                          ) : null}
+                        </div>
+
+                        {/* Edit / Cancel button */}
+                        {!isEditing ? (
+                          <button
+                            onClick={() => startEdit(i)}
+                            className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
+                          >
+                            Editar
+                          </button>
                         ) : (
-                          <p className="text-xs text-red-600 mt-0.5">{fila.error}</p>
+                          <button
+                            onClick={() => { setEditingIdx(null); setEditDraft({}) }}
+                            className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 transition-colors"
+                          >
+                            Cancelar
+                          </button>
                         )}
                       </div>
+
+                      {/* Inline edit form */}
+                      {isEditing && (
+                        <div className="px-3 pb-3 space-y-2 border-t border-indigo-100 pt-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="col-span-2 space-y-1">
+                              <label className="text-xs font-medium text-slate-500">Título *</label>
+                              <input
+                                autoFocus
+                                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400"
+                                value={editDraft.titulo ?? ''}
+                                onChange={e => setEditDraft(d => ({ ...d, titulo: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-slate-500">Tipo</label>
+                              <select
+                                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400"
+                                value={editDraft.tipo ?? 'tarea'}
+                                onChange={e => setEditDraft(d => ({ ...d, tipo: e.target.value as TipoTarea }))}
+                              >
+                                <option value="grupo">Grupo</option>
+                                <option value="tarea">Tarea</option>
+                                <option value="hito">Hito</option>
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-slate-500">Fase</label>
+                              <input
+                                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400"
+                                value={editDraft.fase ?? ''}
+                                onChange={e => setEditDraft(d => ({ ...d, fase: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-slate-500">Fecha inicio (YYYY-MM-DD)</label>
+                              <input
+                                type="date"
+                                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400"
+                                value={editDraft.fechaInicio ?? ''}
+                                onChange={e => setEditDraft(d => ({ ...d, fechaInicio: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-slate-500">Fecha fin (YYYY-MM-DD)</label>
+                              <input
+                                type="date"
+                                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400"
+                                value={editDraft.fechaFin ?? ''}
+                                onChange={e => setEditDraft(d => ({ ...d, fechaFin: e.target.value }))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-slate-500">Responsable</label>
+                              <input
+                                className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400"
+                                value={editDraft.responsable ?? ''}
+                                onChange={e => setEditDraft(d => ({ ...d, responsable: e.target.value }))}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={commitEdit}
+                              className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium py-1.5 rounded-lg transition-colors"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              onClick={() => { setEditingIdx(null); setEditDraft({}) }}
+                              className="px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })

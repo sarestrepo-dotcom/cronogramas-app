@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useParams, useNavigate, useOutletContext } from 'react-router-dom'
+import { useParams, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom'
 import { Timestamp, deleteField } from 'firebase/firestore'
 import {
   Plus, List, BarChart2, Table2, ArrowLeft, Circle, CheckCircle2,
@@ -9,13 +9,16 @@ import {
 } from 'lucide-react'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useTareas } from '@/hooks/useTareas'
+import { useProyectos } from '@/hooks/useProyectos'
+import { useClientes } from '@/hooks/useClientes'
 import { useAuth } from '@/hooks/useAuth'
 import { useUndoStack } from '@/hooks/useUndoStack'
+import { useToast } from '@/components/ui/Toast'
 import { crearTarea, actualizarTarea, eliminarTarea, registrarCambio } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { calcularRutaCritica } from '@/lib/criticalPath'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer } from '@/lib/utils'
-import { enrichTareas, buildHierarchy } from '@/lib/hierarchyUtils'
+import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
 import type { Empresa, Tarea, EstadoTarea, TipoTarea } from '@/types'
 import { TareasTabla } from '@/components/tareas/TareasTabla'
 import { ImportarTareasModal } from '@/components/tareas/ImportarTareasModal'
@@ -24,31 +27,41 @@ import { GanttVisual } from '@/components/gantt/GanttVisual'
 import { KanbanView } from '@/components/kanban/KanbanView'
 import { ProyectoDashboard } from '@/components/proyecto/ProyectoDashboard'
 import { WorkloadView } from '@/components/proyecto/WorkloadView'
+import { ProyectoModal } from '@/pages/ProyectosPage'
 import { ProcesarEmailModal } from '@/components/tareas/ProcesarEmailModal'
 import { LineasBaseModal } from '@/components/lineasBase/LineasBaseModal'
 import { PlantillasModal } from '@/components/plantillas/PlantillasModal'
 import { abrirVistaPDF } from '@/components/proyecto/PrintView'
+import { PortalModal } from '@/components/proyecto/PortalModal'
 
 type TopTab = 'cronograma' | 'dashboard'
 type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt' | 'carga'
 
 export function ProyectoDetailPage() {
-  const { empresaId, proyectoId } = useParams<{ empresaId: string; proyectoId: string }>()
+  const { empresaId, clienteId, proyectoId } = useParams<{ empresaId: string; clienteId: string; proyectoId: string }>()
   const { setEmpresaActiva } = useOutletContext<{ empresaActiva: Empresa | null; setEmpresaActiva: (e: Empresa) => void }>()
   const { user } = useAuth()
   const { empresas } = useEmpresas()
   const { tareas, loading } = useTareas(proyectoId ?? null)
+  const { proyectos } = useProyectos(empresaId ?? null)
+  const { clientes } = useClientes(empresaId ?? null)
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { toast } = useToast()
 
   const { pushUndo, mensaje: undoMensaje } = useUndoStack()
 
-  const [topTab, setTopTab] = useState<TopTab>('cronograma')
-  const [vista, setVista] = useState<Vista>('lista')
+  const topTab = (searchParams.get('tab') as TopTab | null) ?? 'cronograma'
+  const vista   = (searchParams.get('vista') as Vista | null) ?? 'lista'
+
+  const setTopTab = (t: TopTab) =>
+    setSearchParams(p => { p.set('tab', t); p.delete('dash'); return p }, { replace: true })
+  const setVista = (v: Vista) =>
+    setSearchParams(p => { p.set('vista', v); return p }, { replace: true })
   const [showModal, setShowModal] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [showLineasBase, setShowLineasBase] = useState(false)
   const [showPlantillas, setShowPlantillas] = useState(false)
-  const [importMsg, setImportMsg] = useState('')
   const [editTarea, setEditTarea] = useState<Tarea | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [selectedTarea, setSelectedTarea] = useState<Tarea | null>(null)
@@ -56,10 +69,59 @@ export function ProyectoDetailPage() {
   const [filtroGrupo, setFiltroGrupo] = useState('')
   const [showProcesarEmail, setShowProcesarEmail] = useState(false)
   const [showHerramientas, setShowHerramientas] = useState(false)
+  const [showEditProyecto, setShowEditProyecto] = useState(false)
+  const [showPortal, setShowPortal] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+
+  const selectAll = (ids: string[]) =>
+    setSelectedIds(prev => {
+      const allSelected = ids.every(id => prev.has(id))
+      if (allSelected) return new Set()
+      return new Set(ids)
+    })
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const handleBulkEstado = async (estado: EstadoTarea) => {
+    await Promise.all([...selectedIds].map(id => actualizarTarea(id, { estado })))
+    toast(`${selectedIds.size} tarea${selectedIds.size > 1 ? 's' : ''} actualizadas`)
+    clearSelection()
+  }
+
+  const handleBulkResponsable = async (responsable: string) => {
+    const trimmed = responsable.trim()
+    if (!trimmed) return
+    await Promise.all([...selectedIds].map(id => actualizarTarea(id, { asignadoA: trimmed, asignadosA: [trimmed] })))
+    toast(`${selectedIds.size} tarea${selectedIds.size > 1 ? 's' : ''} asignadas a ${trimmed}`)
+    clearSelection()
+  }
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`¿Eliminar ${selectedIds.size} tarea${selectedIds.size > 1 ? 's' : ''}? Esta acción no se puede deshacer.`)) return
+    await Promise.all([...selectedIds].map(id => eliminarTarea(id)))
+    toast(`${selectedIds.size} tarea${selectedIds.size > 1 ? 's' : ''} eliminadas`, 'warning')
+    clearSelection()
+  }
 
   const empresa = empresas.find((e) => e.id === empresaId)
+  const proyecto = proyectos.find((p) => p.id === proyectoId)
   const enrichedTareas = useMemo(() => enrichTareas(tareas), [tareas])
   const rutaCritica = useMemo(() => calcularRutaCritica(enrichedTareas), [enrichedTareas])
+  const numerosMap = useMemo(() => computeNumeros(enrichedTareas), [enrichedTareas])
+
+  // Deep-link: abrir panel de tarea desde búsqueda global (?tarea=ID)
+  useEffect(() => {
+    const tareaId = searchParams.get('tarea')
+    if (!tareaId || enrichedTareas.length === 0) return
+    const found = enrichedTareas.find(t => t.id === tareaId)
+    if (found) {
+      setSelectedTarea(found)
+      setSearchParams(p => { p.delete('tarea'); return p }, { replace: true })
+    }
+  }, [searchParams, enrichedTareas, setSearchParams])
 
   const responsables = useMemo(() =>
     [...new Set(tareas.flatMap(t => t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])))].sort(),
@@ -98,7 +160,11 @@ export function ProyectoDetailPage() {
   // Wrapper con undo + historial para cambios de estado
   const handleStatusChange = async (id: string, estado: EstadoTarea) => {
     const tarea = enrichedTareas.find(t => t.id === id)
-    const progresoNuevo = estado === 'completada' ? 100 : estado === 'pendiente' ? 0 : tarea?.progreso ?? 0
+    const progresoActual = tarea?.progreso ?? 0
+    const progresoNuevo = estado === 'completada' ? 100
+      : estado === 'pendiente' ? 0
+      : estado === 'en_progreso' && progresoActual === 0 ? 50
+      : progresoActual
     if (tarea) {
       pushUndo({
         label: `Estado de "${tarea.titulo}"`,
@@ -115,6 +181,7 @@ export function ProyectoDetailPage() {
       })
     }
     await actualizarTarea(id, { estado, progreso: progresoNuevo })
+    toast(`Estado → ${ESTADO_LABELS[estado]}`)
   }
 
   // Wrapper con undo para cambios de fecha en Gantt
@@ -132,34 +199,39 @@ export function ProyectoDetailPage() {
     })
     const updates = await aplicarCascada(tareas, id, fin)
     if (updates.length > 0) {
-      setImportMsg(`↳ ${updates.length} tarea${updates.length > 1 ? 's' : ''} ajustada${updates.length > 1 ? 's' : ''} por dependencia`)
-      setTimeout(() => setImportMsg(''), 4000)
+      toast(`${updates.length} tarea${updates.length > 1 ? 's' : ''} ajustada${updates.length > 1 ? 's' : ''} por dependencia`)
     }
   }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toasts flotantes */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+      {/* Undo toast */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
         {undoMensaje && (
           <div className="bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 pointer-events-auto">
             <RotateCcw size={14} /> {undoMensaje}
           </div>
         )}
-        {importMsg && (
-          <div className="bg-emerald-700 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 pointer-events-auto">
-            <CheckCircle2 size={14} /> {importMsg}
-          </div>
-        )}
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <BulkActionBar
+          count={selectedIds.size}
+          onClear={clearSelection}
+          onEstado={handleBulkEstado}
+          onResponsable={handleBulkResponsable}
+          onDelete={handleBulkDelete}
+        />
+      )}
+
       {/* ── Menú sticky 2 niveles ─────────────────────────────────── */}
-      <div className="sticky top-0 z-10 bg-white flex-shrink-0">
+      <div className="sticky top-0 z-40 bg-white flex-shrink-0">
 
         {/* Nivel 1: navegación + acción principal */}
         <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate(`/empresa/${empresaId}/proyectos`)}
+            <button onClick={() => navigate(clienteId ? `/empresa/${empresaId}/cliente/${clienteId}/proyectos` : `/empresa/${empresaId}/proyectos`)}
               className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
               <ArrowLeft size={17} />
             </button>
@@ -248,8 +320,13 @@ export function ProyectoDetailPage() {
                 </button>
                 {showHerramientas && (
                   <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowHerramientas(false)} />
+                    <div className="fixed inset-0 z-30" onClick={() => setShowHerramientas(false)} />
                     <div className="absolute right-0 top-10 z-50 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 w-52">
+                      <button onClick={() => { setShowEditProyecto(true); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <Pencil size={14} className="text-slate-500" /> Editar proyecto
+                      </button>
+                      <div className="border-t border-slate-100 my-1" />
                       <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Versiones</p>
                       <button onClick={() => { setShowLineasBase(true); setShowHerramientas(false) }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
@@ -261,9 +338,23 @@ export function ProyectoDetailPage() {
                       </button>
                       <div className="border-t border-slate-100 my-1" />
                       <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Exportar / IA</p>
-                      <button onClick={() => { abrirVistaPDF(enrichedTareas, undefined); setShowHerramientas(false) }}
+                      <button onClick={() => { setShowPortal(true); setShowHerramientas(false) }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
-                        <Printer size={14} className="text-slate-500" /> Exportar PDF
+                        <Link2 size={14} className="text-slate-500" /> Portal del cliente
+                      </button>
+                      <button onClick={() => {
+                          const cliente = clientes.find(c => c.id === proyecto?.clienteId)
+                          abrirVistaPDF(enrichedTareas, proyecto, empresa, rutaCritica, {
+                            incluirHitos: true,
+                            incluirRutaCritica: true,
+                            incluirTablaCompleta: true,
+                            incluirPorFase: true,
+                            nombreCliente: cliente?.nombre,
+                          })
+                          setShowHerramientas(false)
+                        }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <Printer size={14} className="text-slate-500" /> Exportar PDF cliente
                       </button>
                       <button onClick={() => { setShowProcesarEmail(true); setShowHerramientas(false) }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
@@ -323,6 +414,10 @@ export function ProyectoDetailPage() {
             empresaId={empresaId!}
             uid={user!.uid}
             rutaCritica={rutaCritica}
+            numeros={numerosMap}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onSelectAll={selectAll}
             onEditTarea={(t) => { setEditTarea(t); setShowModal(true) }}
             onRowClick={(t) => setSelectedTarea(t)}
           />
@@ -337,10 +432,13 @@ export function ProyectoDetailPage() {
             tareas={filteredTareas}
             menuOpen={menuOpen}
             rutaCritica={rutaCritica}
+            numeros={numerosMap}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
             onMenuToggle={(id) => setMenuOpen(menuOpen === id ? null : id)}
             onMenuClose={() => setMenuOpen(null)}
             onEdit={(t) => setSelectedTarea(t)}
-            onDelete={async (id) => { if (confirm('¿Eliminar tarea?')) await eliminarTarea(id) }}
+            onDelete={async (id) => { if (confirm('¿Eliminar tarea?')) { await eliminarTarea(id); toast('Tarea eliminada', 'warning') } }}
             onStatusChange={handleStatusChange}
             onRowClick={(t) => setSelectedTarea(t)}
           />
@@ -374,10 +472,7 @@ export function ProyectoDetailPage() {
           uid={user!.uid}
           tareas={tareas}
           onClose={() => { setShowModal(false); setEditTarea(null) }}
-          onCascade={(count) => {
-            setImportMsg(`↳ ${count} tarea${count > 1 ? 's' : ''} ajustada${count > 1 ? 's' : ''} por dependencia`)
-            setTimeout(() => setImportMsg(''), 4000)
-          }}
+          onCascade={(count) => toast(`${count} tarea${count > 1 ? 's' : ''} ajustada${count > 1 ? 's' : ''} por dependencia`)}
         />
       )}
 
@@ -386,7 +481,7 @@ export function ProyectoDetailPage() {
         <TareaDetailPanel
           tarea={selectedTarea}
           tareas={tareas}
-          onClose={() => setSelectedTarea(null)}
+          onClose={() => { setSelectedTarea(null); setSearchParams(p => { p.delete('panel'); return p }, { replace: true }) }}
           onEdit={(t) => { setSelectedTarea(null); setEditTarea(t); setShowModal(true) }}
           onDelete={async (id) => { await eliminarTarea(id) }}
           onStatusChange={handleStatusChange}
@@ -403,8 +498,7 @@ export function ProyectoDetailPage() {
           onClose={() => setShowProcesarEmail(false)}
           onAplicado={(count) => {
             setShowProcesarEmail(false)
-            setImportMsg(`✓ ${count} actualización${count !== 1 ? 'es' : ''} aplicada${count !== 1 ? 's' : ''}`)
-            setTimeout(() => setImportMsg(''), 4000)
+            toast(`${count} actualización${count !== 1 ? 'es' : ''} aplicada${count !== 1 ? 's' : ''}`)
           }}
         />
       )}
@@ -417,8 +511,7 @@ export function ProyectoDetailPage() {
           uid={user!.uid}
           onClose={() => setShowImport(false)}
           onImportado={(count) => {
-            setImportMsg(`✓ ${count} tarea${count !== 1 ? 's' : ''} importada${count !== 1 ? 's' : ''}`)
-            setTimeout(() => setImportMsg(''), 4000)
+            toast(`${count} tarea${count !== 1 ? 's' : ''} importada${count !== 1 ? 's' : ''}`)
             setVista('tabla')
           }}
         />
@@ -444,9 +537,27 @@ export function ProyectoDetailPage() {
           onClose={() => setShowPlantillas(false)}
           onAplicada={(count) => {
             setShowPlantillas(false)
-            setImportMsg(`✓ ${count} tarea${count !== 1 ? 's' : ''} creada${count !== 1 ? 's' : ''} desde plantilla`)
-            setTimeout(() => setImportMsg(''), 4000)
+            toast(`${count} tarea${count !== 1 ? 's' : ''} creada${count !== 1 ? 's' : ''} desde plantilla`)
           }}
+        />
+      )}
+
+      {showEditProyecto && empresa && proyecto && (
+        <ProyectoModal
+          empresa={empresa}
+          uid={user!.uid}
+          proyecto={proyecto}
+          clientes={clientes}
+          onClose={() => setShowEditProyecto(false)}
+          onSave={() => setShowEditProyecto(false)}
+        />
+      )}
+
+      {showPortal && proyectoId && (
+        <PortalModal
+          proyectoId={proyectoId}
+          empresaId={empresaId!}
+          onClose={() => setShowPortal(false)}
         />
       )}
     </div>
@@ -455,10 +566,13 @@ export function ProyectoDetailPage() {
 
 // ─── Lista de tareas ──────────────────────────────────────────────────────────
 
-function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, onEdit, onDelete, onStatusChange, onRowClick }: {
+function TareasList({ tareas, menuOpen, rutaCritica, numeros, selectedIds, onToggleSelect, onMenuToggle, onMenuClose, onEdit, onDelete, onStatusChange, onRowClick }: {
   tareas: Tarea[]
   menuOpen: string | null
   rutaCritica?: Set<string>
+  numeros?: Map<string, string>
+  selectedIds?: Set<string>
+  onToggleSelect?: (id: string) => void
   onMenuToggle: (id: string) => void
   onMenuClose: () => void
   onEdit: (t: Tarea) => void
@@ -520,6 +634,11 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
                   {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 </button>
                 <div className={cn('w-2 h-2 rounded-full', ESTADO_COLORS[tarea.estado].dot)} />
+                {numeros?.get(tarea.id) && (
+                  <span className="text-[11px] font-mono text-slate-400 tabular-nums min-w-[2rem] text-right">
+                    {numeros.get(tarea.id)}
+                  </span>
+                )}
                 <span
                   onClick={() => onRowClick(tarea)}
                   className="text-sm font-semibold text-slate-700 cursor-pointer hover:text-indigo-600 flex-1"
@@ -539,18 +658,34 @@ function TareasList({ tareas, menuOpen, rutaCritica, onMenuToggle, onMenuClose, 
         }
 
         return (
-          <div key={tarea.id} style={{ paddingLeft: nivel > 0 ? 28 : 0 }}>
-            <TareaRow
-              tarea={tarea}
-              menuOpen={menuOpen === tarea.id}
-              esCritica={rutaCritica?.has(tarea.id) ?? false}
-              onMenuToggle={() => onMenuToggle(tarea.id)}
-              onMenuClose={onMenuClose}
-              onEdit={() => onEdit(tarea)}
-              onDelete={() => onDelete(tarea.id)}
-              onStatusChange={(e) => onStatusChange(tarea.id, e)}
-              onClick={() => onRowClick(tarea)}
-            />
+          <div key={tarea.id} style={{ paddingLeft: nivel > 0 ? 28 : 0 }} className="flex items-center gap-1.5">
+            {onToggleSelect && (
+              <input
+                type="checkbox"
+                checked={selectedIds?.has(tarea.id) ?? false}
+                onChange={() => onToggleSelect(tarea.id)}
+                onClick={e => e.stopPropagation()}
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer flex-shrink-0"
+              />
+            )}
+            {numeros?.get(tarea.id) && (
+              <span className="text-[11px] font-mono text-slate-300 tabular-nums w-8 text-right flex-shrink-0 select-none">
+                {numeros.get(tarea.id)}
+              </span>
+            )}
+            <div className="flex-1 min-w-0">
+              <TareaRow
+                tarea={tarea}
+                menuOpen={menuOpen === tarea.id}
+                esCritica={rutaCritica?.has(tarea.id) ?? false}
+                onMenuToggle={() => onMenuToggle(tarea.id)}
+                onMenuClose={onMenuClose}
+                onEdit={() => onEdit(tarea)}
+                onDelete={() => onDelete(tarea.id)}
+                onStatusChange={(e) => onStatusChange(tarea.id, e)}
+                onClick={() => onRowClick(tarea)}
+              />
+            </div>
           </div>
         )
       })
@@ -702,7 +837,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
   const [saving, setSaving] = useState(false)
 
   const fasesExistentes = [...new Set(tareas.map(t => t.fase).filter(Boolean) as string[])].sort()
-  const posiblesParents = tareas.filter((t) => t.id !== tarea?.id && (t.tipo === 'grupo' || !t.parentId))
+  const posiblesParents = tareas.filter((t) => t.id !== tarea?.id && t.tipo === 'grupo' && !t.parentId)
   const posiblesDependencias = tareas.filter((t) => t.id !== tarea?.id)
 
   const toggleDep = (id: string) =>
@@ -764,7 +899,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
           <FormField label="Tipo">
             <div className="flex gap-2">
               {([['tarea', '— Tarea', 'bg-slate-100 text-slate-700'], ['grupo', '▶ Grupo / Fase', 'bg-indigo-100 text-indigo-700'], ['hito', '◆ Hito', 'bg-rose-100 text-rose-700']] as [TipoTarea, string, string][]).map(([val, label, cls]) => (
-                <button key={val} type="button" onClick={() => setTipo(val)}
+                <button key={val} type="button" onClick={() => { setTipo(val); if (val === 'grupo') setParentId('') }}
                   className={cn('flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-all', tipo === val ? cls + ' border-current' : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300')}>
                   {label}
                 </button>
@@ -960,6 +1095,84 @@ function EmptyTareas({ onNew, onImport }: { onNew: () => void; onImport: () => v
           <Plus size={16} /> Nueva tarea
         </button>
       </div>
+    </div>
+  )
+}
+
+// ─── Bulk Action Bar ──────────────────────────────────────────────────────────
+
+function BulkActionBar({ count, onClear, onEstado, onResponsable, onDelete }: {
+  count: number
+  onClear: () => void
+  onEstado: (e: EstadoTarea) => void
+  onResponsable: (r: string) => void
+  onDelete: () => void
+}) {
+  const [respInput, setRespInput] = useState('')
+  const [showResp, setShowResp]   = useState(false)
+
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl text-sm">
+      <span className="font-semibold text-indigo-300 whitespace-nowrap">
+        {count} seleccionada{count !== 1 ? 's' : ''}
+      </span>
+      <div className="w-px h-5 bg-slate-700" />
+
+      {/* Cambiar estado */}
+      <select
+        defaultValue=""
+        onChange={e => { if (e.target.value) { onEstado(e.target.value as EstadoTarea); e.target.value = '' } }}
+        className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500 cursor-pointer"
+      >
+        <option value="" disabled>Cambiar estado…</option>
+        <option value="pendiente">Pendiente</option>
+        <option value="en_progreso">En progreso</option>
+        <option value="completada">Completada</option>
+        <option value="bloqueada">Bloqueada</option>
+      </select>
+
+      {/* Asignar responsable */}
+      <div className="relative">
+        {showResp ? (
+          <form onSubmit={e => { e.preventDefault(); onResponsable(respInput); setRespInput(''); setShowResp(false) }}
+            className="flex items-center gap-1.5">
+            <input
+              autoFocus
+              value={respInput}
+              onChange={e => setRespInput(e.target.value)}
+              onBlur={() => { if (!respInput) setShowResp(false) }}
+              onKeyDown={e => e.key === 'Escape' && setShowResp(false)}
+              placeholder="Nombre responsable…"
+              className="bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-indigo-500 w-44"
+            />
+            <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 px-2 py-1.5 rounded-lg text-xs font-medium">
+              Asignar
+            </button>
+            <button type="button" onClick={() => setShowResp(false)} className="text-slate-400 hover:text-white">
+              <X size={13} />
+            </button>
+          </form>
+        ) : (
+          <button onClick={() => setShowResp(true)}
+            className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg text-xs">
+            <Users size={12} /> Asignar responsable
+          </button>
+        )}
+      </div>
+
+      <div className="w-px h-5 bg-slate-700" />
+
+      {/* Eliminar */}
+      <button onClick={onDelete}
+        className="flex items-center gap-1.5 bg-red-600/20 hover:bg-red-600/40 border border-red-600/30 px-3 py-1.5 rounded-lg text-xs text-red-400 hover:text-red-300 transition-colors">
+        <Trash2 size={12} /> Eliminar
+      </button>
+
+      <div className="w-px h-5 bg-slate-700" />
+
+      <button onClick={onClear} className="text-slate-400 hover:text-white transition-colors">
+        <X size={15} />
+      </button>
     </div>
   )
 }

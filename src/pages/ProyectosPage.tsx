@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useOutletContext } from 'react-router-dom'
-import { Plus, FolderKanban, Calendar, MoreVertical, Trash2, ExternalLink, Users, Share2, UserPlus, X, Pencil } from 'lucide-react'
+import { Plus, FolderKanban, Calendar, MoreVertical, Trash2, ExternalLink, Users, Share2, UserPlus, X, Pencil, ArrowLeft, DollarSign } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import { useProyectos } from '@/hooks/useProyectos'
+import { useClientes } from '@/hooks/useClientes'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useAuth } from '@/hooks/useAuth'
 import { crearProyecto, actualizarProyecto, eliminarProyecto, agregarMiembroProyecto, removerMiembroProyecto, buscarUsuarioPorEmail, getUsuario, suscribirPermitidos } from '@/lib/firestore'
@@ -20,11 +21,12 @@ const ESTADO_CONFIG = {
 const COLORES_PROYECTO = ['indigo', 'blue', 'violet', 'emerald', 'rose', 'amber', 'cyan', 'slate']
 
 export function ProyectosPage() {
-  const { empresaId } = useParams<{ empresaId: string }>()
+  const { empresaId, clienteId } = useParams<{ empresaId: string; clienteId: string }>()
   const { setEmpresaActiva } = useOutletContext<{ empresaActiva: Empresa | null; setEmpresaActiva: (e: Empresa) => void }>()
   const { user } = useAuth()
   const { empresas } = useEmpresas()
-  const { proyectos, loading } = useProyectos(empresaId ?? null)
+  const { proyectos: todosProyectos, loading } = useProyectos(empresaId ?? null)
+  const { clientes } = useClientes(empresaId ?? null)
   const navigate = useNavigate()
 
   const [showModal, setShowModal] = useState(false)
@@ -36,6 +38,13 @@ export function ProyectosPage() {
   const miRol = empresa?.miembros[user!.uid] as Rol | undefined
   const puedoCompartir = miRol === 'owner' || miRol === 'admin'
 
+  const cliente = clientes.find((c) => c.id === clienteId)
+  const esSinCliente = clienteId === '_sin_cliente'
+
+  const proyectos = esSinCliente
+    ? todosProyectos.filter((p) => !p.clienteId)
+    : todosProyectos.filter((p) => p.clienteId === clienteId)
+
   useEffect(() => {
     if (empresa) setEmpresaActiva(empresa)
   }, [empresa])
@@ -43,21 +52,29 @@ export function ProyectosPage() {
   if (loading) return <PageLoader />
 
   const coloresEmpresa = COLORES_MAP[empresa?.color ?? 'indigo'] ?? COLORES_MAP.indigo
+  const nombreCliente = esSinCliente ? 'Sin cliente' : (cliente?.nombre ?? 'Proyectos')
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      {/* Back */}
+      <button
+        onClick={() => navigate(`/empresa/${empresaId}/proyectos`)}
+        className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mb-6 transition-colors"
+      >
+        <ArrowLeft size={15} /> {empresa?.nombre ?? 'Clientes'}
+      </button>
+
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-3 mb-2">
-            {empresa && (
-              <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm', coloresEmpresa.bg)}>
-                {empresa.nombre[0]}
-              </div>
+            <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm', coloresEmpresa.bg)}>
+              {nombreCliente[0]}
+            </div>
+            <h1 className="text-2xl font-bold text-slate-900">{nombreCliente}</h1>
+            {cliente?.esInterno && (
+              <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">Interno</span>
             )}
-            <h1 className="text-2xl font-bold text-slate-900">
-              {empresa?.nombre ?? 'Proyectos'}
-            </h1>
           </div>
           <p className="text-slate-500 text-sm">{proyectos.length} proyecto{proyectos.length !== 1 ? 's' : ''}</p>
         </div>
@@ -84,7 +101,7 @@ export function ProyectosPage() {
               menuOpen={menuOpen === proyecto.id}
               onMenuToggle={() => setMenuOpen(menuOpen === proyecto.id ? null : proyecto.id)}
               onMenuClose={() => setMenuOpen(null)}
-              onAbrir={() => navigate(`/empresa/${empresaId}/proyecto/${proyecto.id}`)}
+              onAbrir={() => navigate(`/empresa/${empresaId}/cliente/${clienteId}/proyecto/${proyecto.id}`)}
               onCompartir={() => { setCompartirProyecto(proyecto); setMenuOpen(null) }}
               onEditar={() => { setEditingProyecto(proyecto); setMenuOpen(null) }}
               onEliminar={async () => { if (confirm('¿Eliminar proyecto?')) await eliminarProyecto(proyecto.id) }}
@@ -97,8 +114,10 @@ export function ProyectosPage() {
         <ProyectoModal
           empresa={empresa}
           uid={user!.uid}
+          clientes={clientes}
+          clienteId={esSinCliente ? undefined : clienteId}
           onClose={() => setShowModal(false)}
-          onCreate={(id) => { setShowModal(false); navigate(`/empresa/${empresaId}/proyecto/${id}`) }}
+          onCreate={(id) => { setShowModal(false); navigate(`/empresa/${empresaId}/cliente/${clienteId}/proyecto/${id}`) }}
         />
       )}
 
@@ -106,6 +125,7 @@ export function ProyectosPage() {
         <ProyectoModal
           empresa={empresa}
           uid={user!.uid}
+          clientes={clientes}
           proyecto={editingProyecto}
           onClose={() => setEditingProyecto(null)}
           onSave={() => setEditingProyecto(null)}
@@ -203,10 +223,12 @@ function ProyectoCard({ proyecto, puedoCompartir, puedoEditar, menuOpen, onMenuT
   )
 }
 
-function ProyectoModal({ empresa, uid, proyecto, onClose, onCreate, onSave }: {
+export function ProyectoModal({ empresa, uid, proyecto, clienteId: clienteIdProp, clientes = [], onClose, onCreate, onSave }: {
   empresa: Empresa
   uid: string
   proyecto?: Proyecto
+  clienteId?: string
+  clientes?: import('@/types').Cliente[]
   onClose: () => void
   onCreate?: (id: string) => void
   onSave?: () => void
@@ -224,6 +246,8 @@ function ProyectoModal({ empresa, uid, proyecto, onClose, onCreate, onSave }: {
   const [estado, setEstado] = useState<Proyecto['estado']>(proyecto?.estado ?? 'activo')
   const [fechaInicio, setFechaInicio] = useState(tsToStr(proyecto?.fechaInicio, today))
   const [fechaFin, setFechaFin] = useState(tsToStr(proyecto?.fechaFin, ''))
+  const [valorVenta, setValorVenta] = useState(proyecto?.valorVenta?.toString() ?? '')
+  const [selectedClienteId, setSelectedClienteId] = useState(proyecto?.clienteId ?? clienteIdProp ?? '')
   const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -242,6 +266,8 @@ function ProyectoModal({ empresa, uid, proyecto, onClose, onCreate, onSave }: {
         estado,
         fechaInicio: Timestamp.fromDate(fiDate),
         fechaFin: Timestamp.fromDate(ffDate),
+        valorVenta: valorVenta ? Number(valorVenta) : undefined,
+        clienteId: selectedClienteId || undefined,
       }
       if (isEdit && proyecto) {
         await actualizarProyecto(proyecto.id, data)
@@ -250,6 +276,7 @@ function ProyectoModal({ empresa, uid, proyecto, onClose, onCreate, onSave }: {
         const id = await crearProyecto({
           ...data,
           empresaId: empresa.id,
+          clienteId: selectedClienteId || undefined,
           creadoPor: uid,
           miembros: { [uid]: 'owner' },
         } as Omit<Proyecto, 'id' | 'creadoEn'>)
@@ -271,6 +298,22 @@ function ProyectoModal({ empresa, uid, proyecto, onClose, onCreate, onSave }: {
         </FormField>
         <FormField label="Descripción (opcional)">
           <textarea className="input-base resize-none" rows={2} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Contexto, alcance, notas generales…" />
+        </FormField>
+        {clientes.length > 0 && (
+          <FormField label="Cliente">
+            <select className="input-base" value={selectedClienteId} onChange={(e) => setSelectedClienteId(e.target.value)}>
+              <option value="">— Sin cliente —</option>
+              {clientes.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}{c.esInterno ? ' (Interno)' : ''}</option>
+              ))}
+            </select>
+          </FormField>
+        )}
+        <FormField label="Valor de venta (opcional)">
+          <div className="relative">
+            <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input className="input-base pl-8" type="number" min={0} value={valorVenta} onChange={(e) => setValorVenta(e.target.value)} placeholder="0" />
+          </div>
         </FormField>
         <div className="grid grid-cols-2 gap-4">
           <FormField label="Fecha inicio">
@@ -515,9 +558,13 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5">
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-        {children}
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col max-h-[90vh]">
+        <div className="px-6 pt-6 pb-2 shrink-0">
+          <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        </div>
+        <div className="overflow-y-auto px-6 pb-6 space-y-4 flex-1">
+          {children}
+        </div>
       </div>
     </div>
   )

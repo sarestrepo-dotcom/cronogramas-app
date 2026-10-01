@@ -35,56 +35,105 @@ export function buildHierarchy(tareas: Tarea[]): HierarchyRow[] {
   }
 
   const result: HierarchyRow[] = []
+  const sortFn = (a: Tarea, b: Tarea) => hasOrden
+    ? (a.orden ?? 999999) - (b.orden ?? 999999)
+    : (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0)
 
-  const pushRoot = (root: Tarea) => {
-    result.push({ kind: 'tarea', tarea: root, nivel: 0 })
-    const children = tareas
-      .filter((t) => t.parentId === root.id)
-      .sort((a, b) => hasOrden
-        ? (a.orden ?? 999999) - (b.orden ?? 999999)
-        : (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0))
-    for (const child of children) {
-      result.push({ kind: 'tarea', tarea: child, nivel: 1 })
-    }
+  const pushTask = (t: Tarea, nivel: number) => {
+    result.push({ kind: 'tarea', tarea: t, nivel })
+    const children = tareas.filter(c => c.parentId === t.id).sort(sortFn)
+    for (const child of children) pushTask(child, nivel + 1)
   }
 
   for (const [fase, faseRoots] of byFase) {
     result.push({ kind: 'fase_header', label: fase })
-    for (const root of faseRoots) pushRoot(root)
+    for (const root of faseRoots) pushTask(root, 0)
   }
-  for (const root of noFase) pushRoot(root)
+  for (const root of noFase) pushTask(root, 0)
 
   return result
 }
 
+// ─── computeNumeros ───────────────────────────────────────────────────────────
+// Assigns hierarchical numbers (1, 2, 3, 3.1, 3.2...) to each task by traversing
+// the same order used by buildHierarchy.
+export function computeNumeros(tareas: Tarea[]): Map<string, string> {
+  const map = new Map<string, string>()
+  const hasOrden = tareas.some(t => t.orden !== undefined)
+  const ids = new Set(tareas.map(t => t.id))
+
+  const sortFn = (a: Tarea, b: Tarea) =>
+    hasOrden ? (a.orden ?? 999999) - (b.orden ?? 999999)
+             : (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0)
+
+  const roots = tareas.filter(t => !t.parentId || !ids.has(t.parentId)).sort(sortFn)
+
+  function traverse(tasks: Tarea[], prefix: string) {
+    tasks.forEach((t, i) => {
+      const num = prefix ? `${prefix}.${i + 1}` : `${i + 1}`
+      map.set(t.id, num)
+      const children = tareas.filter(c => c.parentId === t.id).sort(sortFn)
+      if (children.length) traverse(children, num)
+    })
+  }
+
+  traverse(roots, '')
+  return map
+}
+
 // ─── enrichTareas ─────────────────────────────────────────────────────────────
-// Derives estado, progreso, fechaInicio and fechaFin for grupos from their direct children.
+// Derives estado, progreso, fechaInicio and fechaFin for grupos recursively
+// (bottom-up via memoization so nested groups propagate correctly).
+// Completed leaf tasks always contribute 100% to parent progress regardless of
+// their stored progreso value.
 export function enrichTareas(tareas: Tarea[]): Tarea[] {
-  return tareas.map((tarea) => {
-    if (tarea.tipo !== 'grupo') return tarea
-    const children = tareas.filter((t) => t.parentId === tarea.id)
-    if (children.length === 0) return tarea
+  const memo = new Map<string, Tarea>()
+
+  function enrich(t: Tarea): Tarea {
+    if (memo.has(t.id)) return memo.get(t.id)!
+
+    if (t.tipo !== 'grupo') {
+      // Completed tasks always count as 100% for parent calculations
+      const result = t.estado === 'completada' && (t.progreso ?? 0) < 100
+        ? { ...t, progreso: 100 }
+        : t
+      memo.set(t.id, result)
+      return result
+    }
+
+    const children = tareas.filter((c) => c.parentId === t.id).map(enrich)
+    if (children.length === 0) {
+      memo.set(t.id, t)
+      return t
+    }
 
     const progreso = Math.round(
-      children.reduce((sum, t) => sum + (t.progreso ?? 0), 0) / children.length
+      children.reduce((sum, c) => sum + (c.progreso ?? 0), 0) / children.length
     )
 
-    const completadas = children.filter((t) => t.estado === 'completada').length
+    const completadas = children.filter((c) => c.estado === 'completada').length
     let estado: EstadoTarea
-    if (completadas === children.length) estado = 'completada'
-    else if (children.some((t) => t.estado === 'bloqueada')) estado = 'bloqueada'
-    else if (children.some((t) => t.estado === 'en_progreso' || (t.progreso ?? 0) > 0)) estado = 'en_progreso'
-    else estado = 'pendiente'
+    if (completadas === children.length)                                               estado = 'completada'
+    else if (children.some((c) => c.estado === 'bloqueada'))                          estado = 'bloqueada'
+    else if (children.some((c) => c.estado === 'en_progreso' || (c.progreso ?? 0) > 0)) estado = 'en_progreso'
+    else                                                                               estado = 'pendiente'
 
-    // Derive date span: earliest child start → latest child end
-    const withDates = children.filter((t) => t.fechaInicio && t.fechaFin)
-    if (withDates.length === 0) return { ...tarea, progreso, estado }
+    const withDates = children.filter((c) => c.fechaInicio && c.fechaFin)
+    if (withDates.length === 0) {
+      const result = { ...t, progreso, estado }
+      memo.set(t.id, result)
+      return result
+    }
 
-    const fechaInicio = withDates.reduce((min, t) =>
-      t.fechaInicio.seconds < min.seconds ? t.fechaInicio : min, withDates[0].fechaInicio)
-    const fechaFin = withDates.reduce((max, t) =>
-      t.fechaFin.seconds > max.seconds ? t.fechaFin : max, withDates[0].fechaFin)
+    const fechaInicio = withDates.reduce((min, c) =>
+      c.fechaInicio.seconds < min.seconds ? c.fechaInicio : min, withDates[0].fechaInicio)
+    const fechaFin = withDates.reduce((max, c) =>
+      c.fechaFin.seconds > max.seconds ? c.fechaFin : max, withDates[0].fechaFin)
 
-    return { ...tarea, progreso, estado, fechaInicio, fechaFin }
-  })
+    const result = { ...t, progreso, estado, fechaInicio, fechaFin }
+    memo.set(t.id, result)
+    return result
+  }
+
+  return tareas.map(enrich)
 }

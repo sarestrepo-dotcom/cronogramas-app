@@ -198,18 +198,32 @@ src/
 ## Rutas de la app
 
 ```
-/login                                                     → LoginPage (pública)
-/portal/:token                                             → PortalClientePage (pública, sin auth)
-/dashboard                                                 → DashboardPage
-/empresas                                                  → EmpresasPage
-/empresa/:empresaId/proyectos                              → ClientesPage
-/empresa/:empresaId/cliente/:clienteId/proyectos           → ProyectosPage
-/empresa/:empresaId/proyecto/:proyectoId                   → ProyectoDetailPage
+/login                                                      → LoginPage (pública)
+/portal/:token                                              → PortalClientePage (pública, sin auth)
+/dashboard                                                  → DashboardPage
+/empresas                                                   → EmpresasPage
+/empresa/:empresaId/proyectos                               → ClientesPage (lista clientes)
+/empresa/:empresaId/cliente/:clienteId/proyectos            → ProyectosPage
+/empresa/:empresaId/proyecto/:proyectoId                    → ProyectoDetailPage
 /empresa/:empresaId/cliente/:clienteId/proyecto/:proyectoId → ProyectoDetailPage
-/mis-tareas                                                → MisTareasPage
-/settings                                                  → SettingsPage
-/admin                                                     → AdminPage (solo admins)
+/mis-tareas                                                 → MisTareasPage
+/settings?s=perfil|seguridad|email                          → SettingsPage
+/admin                                                      → AdminPage (solo admins)
 ```
+
+### URL params en ProyectoDetailPage
+
+Todas las vistas y tabs usan `useSearchParams` — cada estado es una URL única y compartible:
+
+| Param | Valores | Descripción |
+|-------|---------|-------------|
+| `?tab=` | `cronograma` \| `dashboard` | Tab principal del proyecto |
+| `?vista=` | `lista` \| `tabla` \| `kanban` \| `gantt` \| `carga` | Vista activa del cronograma |
+| `?dash=` | `resumen` \| `semanal` | Sub-tab dentro del dashboard (ProyectoDashboard) |
+| `?tarea=ID` | string | Deep-link a tarea — abre el panel y se borra del URL |
+| `?panel=` | `detalle` \| `comentarios` \| `historial` | Tab activo dentro del panel de tarea |
+
+**Regla:** todos los setters usan `{ replace: true }` para no contaminar el historial de navegación. Al cerrar el panel de tarea se borra `?panel=` preservando los demás params. Al abrir vía `?tarea=ID`, se borra solo ese param (no los demás).
 
 ---
 

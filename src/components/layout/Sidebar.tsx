@@ -14,7 +14,10 @@ import {
   Menu,
   X,
   Share2,
+  CheckSquare,
+  Search,
 } from 'lucide-react'
+import { NotificacionesBell } from './NotificacionesPanel'
 import { cn, getInitials } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
 import { useEmpresas } from '@/hooks/useEmpresas'
@@ -24,9 +27,10 @@ import type { Empresa } from '@/types'
 interface SidebarProps {
   empresaActiva: Empresa | null
   onEmpresaChange: (empresa: Empresa) => void
+  onOpenSearch?: () => void
 }
 
-export function Sidebar({ empresaActiva, onEmpresaChange }: SidebarProps) {
+export function Sidebar({ empresaActiva, onEmpresaChange, onOpenSearch }: SidebarProps) {
   const { user, logout, isAdmin } = useAuth()
   const { empresas } = useEmpresas()
   const misEmpresaIds = empresas.map((e) => e.id)
@@ -61,8 +65,19 @@ export function Sidebar({ empresaActiva, onEmpresaChange }: SidebarProps) {
 
       {/* Nav principal */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-        <NavItem to="/dashboard" icon={<LayoutDashboard size={16} />} label="Dashboard" active={isActive('/dashboard')} />
-        <NavItem to="/empresas" icon={<Building2 size={16} />} label="Empresas" active={isActive('/empresas')} />
+        {/* Search button */}
+        <button
+          onClick={onOpenSearch}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors mb-1"
+        >
+          <Search size={16} />
+          <span className="flex-1 text-left">Buscar</span>
+          <kbd className="text-[10px] font-mono text-slate-500 border border-slate-700 rounded px-1.5 py-0.5">⌘K</kbd>
+        </button>
+
+        <NavItem to="/dashboard"   icon={<LayoutDashboard size={16} />} label="Dashboard"    active={isActive('/dashboard')} />
+        <NavItem to="/mis-tareas" icon={<CheckSquare size={16} />}     label="Mis tareas"   active={isActive('/mis-tareas')} />
+        <NavItem to="/empresas"   icon={<Building2 size={16} />}       label="Empresas"     active={isActive('/empresas')} />
 
         {/* Empresa activa + proyectos */}
         {empresas.length > 0 && (
@@ -173,6 +188,7 @@ export function Sidebar({ empresaActiva, onEmpresaChange }: SidebarProps) {
             <p className="text-xs font-medium text-slate-200 truncate">{user?.displayName ?? 'Usuario'}</p>
             <p className="text-xs text-slate-500 truncate">{user?.email}</p>
           </div>
+          <NotificacionesBell />
           <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition-colors">
             <LogOut size={15} />
           </button>

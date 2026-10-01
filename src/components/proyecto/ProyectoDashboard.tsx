@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { startOfWeek, endOfWeek, format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { Mail, Copy, Check, X, Download } from 'lucide-react'
@@ -17,7 +18,10 @@ interface Props {
 }
 
 export function ProyectoDashboard({ tareas, proyectoNombre }: Props) {
-  const [tab, setTab] = useState<DashTab>('resumen')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = (searchParams.get('dash') as DashTab | null) ?? 'resumen'
+  const setTab = (t: DashTab) =>
+    setSearchParams(p => { p.set('dash', t); return p }, { replace: true })
   const [filtroResponsable, setFiltroResponsable] = useState('')
   const [filtroGrupo, setFiltroGrupo] = useState('')
   const [soloHitos, setSoloHitos] = useState(false)

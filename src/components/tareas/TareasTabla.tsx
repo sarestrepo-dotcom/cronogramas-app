@@ -13,6 +13,10 @@ interface TareasTablaProps {
   empresaId: string
   uid: string
   rutaCritica?: Set<string>
+  numeros?: Map<string, string>
+  selectedIds?: Set<string>
+  onToggleSelect?: (id: string) => void
+  onSelectAll?: (ids: string[]) => void
   onEditTarea?: (tarea: Tarea) => void
   onRowClick?: (tarea: Tarea) => void
 }
@@ -37,7 +41,7 @@ const PRIORIDAD_STYLES: Record<Tarea['prioridad'], string> = {
   critica: 'bg-red-100 text-red-700',
 }
 
-export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, onEditTarea, onRowClick }: TareasTablaProps) {
+export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, numeros, selectedIds, onToggleSelect, onSelectAll, onEditTarea, onRowClick }: TareasTablaProps) {
   const today = new Date().toISOString().split('T')[0]
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -167,7 +171,11 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
     else if (field === 'prioridad') update = { prioridad: editValue as Tarea['prioridad'] }
     else if (field === 'estado') {
       const newEstado = editValue as EstadoTarea
-      const newProgreso = newEstado === 'completada' ? 100 : newEstado === 'pendiente' ? 0 : tarea.progreso
+      const progresoActual = tarea.progreso ?? 0
+      const newProgreso = newEstado === 'completada' ? 100
+        : newEstado === 'pendiente' ? 0
+        : newEstado === 'en_progreso' && progresoActual === 0 ? 50
+        : progresoActual
       update = { estado: newEstado, progreso: newProgreso }
     }
     else if (field === 'progreso') update = { progreso: Math.min(100, Math.max(0, Number(editValue))) }
@@ -272,7 +280,21 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
       <table className="w-full text-sm border-separate border-spacing-0">
         <thead>
           <tr>
-            <th className="w-6 border-b border-slate-200 bg-slate-50 rounded-tl-xl" />
+            {onToggleSelect && (
+              <th className="w-8 px-2 border-b border-slate-200 bg-slate-50 rounded-tl-xl">
+                <input
+                  type="checkbox"
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  checked={selectedIds ? tareas.filter(t => t.tipo !== 'grupo').every(t => selectedIds.has(t.id)) && tareas.filter(t => t.tipo !== 'grupo').length > 0 : false}
+                  onChange={() => {
+                    const nonGrupos = tareas.filter(t => t.tipo !== 'grupo').map(t => t.id)
+                    onSelectAll?.(nonGrupos)
+                  }}
+                />
+              </th>
+            )}
+            <th className={cn("w-6 border-b border-slate-200 bg-slate-50", !onToggleSelect && "rounded-tl-xl")} />
+            <th className="w-10 text-center px-1 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-200 bg-slate-50">#</th>
             {(['Tarea', 'Responsable(s)', 'Fase'] as const).map((h) => (
               <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200 bg-slate-50">
                 {h}
@@ -307,7 +329,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   onDragLeave={() => setDragOverFase(null)}
                   onDrop={() => handleDropFase(row.label)}
                 >
-                  <td colSpan={mostrarFechaInicio ? 13 : 12}
+                  <td colSpan={(mostrarFechaInicio ? 14 : 13) + (onToggleSelect ? 1 : 0)}
                     className={cn(
                       'border-b border-indigo-100 text-white text-xs font-bold uppercase tracking-wider transition-colors',
                       isDraggingThis ? 'bg-indigo-400 opacity-50' : isDropTarget ? 'bg-indigo-800' : 'bg-indigo-600',
@@ -363,6 +385,19 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   dragOverId === tarea.id && dragId !== tarea.id && 'border-t-2 border-indigo-400',
                 )}
               >
+                {/* Checkbox selección bulk */}
+                {onToggleSelect && (
+                  <td className="px-2 py-2 border-b border-slate-100 w-8" onClick={e => e.stopPropagation()}>
+                    {!isGrupo && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds?.has(tarea.id) ?? false}
+                        onChange={() => onToggleSelect(tarea.id)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+                    )}
+                  </td>
+                )}
                 {/* Drag handle */}
                 <td className="px-1 py-2 border-b border-slate-100 w-6">
                   <div
@@ -373,6 +408,12 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, o
                   >
                     <GripVertical size={13} />
                   </div>
+                </td>
+                {/* Número */}
+                <td className="px-1 py-2 border-b border-slate-100 w-10 text-center">
+                  <span className="text-[11px] font-mono text-slate-400 tabular-nums">
+                    {numeros?.get(tarea.id) ?? ''}
+                  </span>
                 </td>
                 {/* Título */}
                 <td className="px-3 py-2 border-b border-slate-100 min-w-48 max-w-72">

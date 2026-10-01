@@ -1,19 +1,23 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { updateProfile, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
 import { auth } from '@/lib/firebase'
 import { useAuth } from '@/hooks/useAuth'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { getInitials } from '@/lib/utils'
-import { getEmailConfig, guardarEmailConfig, enviarEmailAhora as callEnviarEmail, previewEmailSemanal } from '@/lib/firestore'
+import { getEmailConfig, guardarEmailConfig, enviarEmailAhora as callEnviarEmail, previewEmailSemanal, getUsuario, upsertUsuario } from '@/lib/firestore'
 import { suscribirProyectosPorEmpresa } from '@/lib/firestore'
-import { User, Lock, Bell, Shield, CheckCircle2, Mail, Plus, Trash2, Send, Eye, EyeOff, X, Loader2 } from 'lucide-react'
+import { User, Lock, Bell, Shield, CheckCircle2, Mail, Plus, Trash2, Send, Eye, EyeOff, X, Loader2, Tag } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { EmailConfig, Proyecto } from '@/types'
 
 type Section = 'perfil' | 'seguridad' | 'email'
 
 export function SettingsPage() {
-  const [section, setSection] = useState<Section>('perfil')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const section = (searchParams.get('s') as Section | null) ?? 'perfil'
+  const setSection = (s: Section) =>
+    setSearchParams({ s }, { replace: true })
   const { isAdmin } = useAuth()
 
   return (
@@ -463,6 +467,93 @@ function PerfilSection() {
           )}
         </div>
       </form>
+
+      {/* Aliases para Mis Tareas */}
+      {user && <AliasesSection uid={user.uid} email={user.email ?? ''} displayName={user.displayName ?? ''} />}
+    </div>
+  )
+}
+
+function AliasesSection({ uid, email, displayName }: { uid: string; email: string; displayName: string }) {
+  const [aliases, setAliases]   = useState<string[]>([])
+  const [nuevo, setNuevo]       = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [saved, setSaved]       = useState(false)
+
+  useEffect(() => {
+    getUsuario(uid).then(u => setAliases(u?.aliases ?? []))
+  }, [uid])
+
+  const agregar = () => {
+    const trimmed = nuevo.trim()
+    if (!trimmed || aliases.includes(trimmed)) { setNuevo(''); return }
+    setAliases(prev => [...prev, trimmed])
+    setNuevo('')
+  }
+
+  const eliminar = (alias: string) => setAliases(prev => prev.filter(a => a !== alias))
+
+  const guardar = async () => {
+    setSaving(true)
+    await upsertUsuario(uid, { aliases })
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
+  }
+
+  return (
+    <div className="border-t border-slate-200 pt-6 space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+          <Tag size={14} className="text-indigo-500" /> Nombres en tareas
+        </h3>
+        <p className="text-xs text-slate-400 mt-0.5">
+          Agrega los nombres o aliases con que te asignan tareas en los cronogramas. "Mis tareas" los usará para encontrar todo lo tuyo.
+        </p>
+      </div>
+
+      {/* Identidades automáticas (solo lectura) */}
+      <div className="flex flex-wrap gap-2">
+        {[email, displayName].filter(Boolean).map(id => (
+          <span key={id} className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-full">
+            {id} <span className="text-indigo-300 ml-0.5">·auto</span>
+          </span>
+        ))}
+        {aliases.map(alias => (
+          <span key={alias} className="flex items-center gap-1 text-xs bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-full">
+            {alias}
+            <button onClick={() => eliminar(alias)} className="text-slate-400 hover:text-red-500 ml-0.5">
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+      </div>
+
+      {/* Agregar alias */}
+      <div className="flex gap-2">
+        <input
+          className="input-base flex-1 text-sm"
+          value={nuevo}
+          onChange={e => setNuevo(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), agregar())}
+          placeholder='Ej: "Sergio", "Marin", "sergio@email.com"'
+        />
+        <button onClick={agregar} type="button"
+          className="flex items-center gap-1 px-3 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors">
+          <Plus size={14} /> Agregar
+        </button>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button onClick={guardar} disabled={saving} type="button" className="btn-primary text-sm">
+          {saving ? 'Guardando...' : 'Guardar aliases'}
+        </button>
+        {saved && (
+          <span className="flex items-center gap-1.5 text-sm text-emerald-600">
+            <CheckCircle2 size={14} /> Guardado · Mis tareas ya los usa
+          </span>
+        )}
+      </div>
     </div>
   )
 }

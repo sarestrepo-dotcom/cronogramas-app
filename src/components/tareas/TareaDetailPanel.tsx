@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { X, Pencil, Trash2, Calendar, Link, CheckCircle2, Circle, Clock, Flag, ExternalLink, Send, History, MessageSquare } from 'lucide-react'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, diasRestantes, isVencida } from '@/lib/utils'
 import { agregarComentario, eliminarComentario, suscribirComentarios, suscribirHistorial } from '@/lib/firestore'
@@ -37,7 +38,10 @@ interface TareaDetailPanelProps {
 
 export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onStatusChange }: TareaDetailPanelProps) {
   const { user } = useAuth()
-  const [activeTab, setActiveTab] = useState<Tab>('detalle')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = (searchParams.get('panel') as Tab | null) ?? 'detalle'
+  const setActiveTab = (t: Tab) =>
+    setSearchParams(p => { p.set('panel', t); return p }, { replace: true })
   const [showEstados, setShowEstados] = useState(false)
   const [comentarios, setComentarios] = useState<Comentario[]>([])
   const [historial, setHistorial] = useState<CambioHistorial[]>([])

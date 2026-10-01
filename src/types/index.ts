@@ -17,12 +17,23 @@ export interface Empresa {
   creadoEn: Timestamp
 }
 
-export interface Proyecto {
+export interface Cliente {
   id: string
   empresaId: string
   nombre: string
+  esInterno?: boolean
+  creadoPor: string
+  creadoEn: Timestamp
+}
+
+export interface Proyecto {
+  id: string
+  empresaId: string
+  clienteId?: string
+  nombre: string
   objetivo?: string
   descripcion?: string
+  valorVenta?: number
   fechaInicio: Timestamp
   fechaFin: Timestamp
   estado: 'activo' | 'pausado' | 'completado' | 'archivado'
@@ -64,6 +75,7 @@ export interface UsuarioApp {
   displayName: string
   photoURL?: string
   empresas: string[]
+  aliases?: string[]   // nombres con que aparece como responsable en tareas
   creadoEn: Timestamp
 }
 

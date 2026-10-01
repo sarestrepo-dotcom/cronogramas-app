@@ -20,7 +20,7 @@ import {
 } from 'firebase/firestore'
 import { db, functions } from './firebase'
 import { httpsCallable } from 'firebase/functions'
-import type { Empresa, Proyecto, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig, LineaBase, Comentario, CambioHistorial, Plantilla, PlantillaTarea } from '@/types'
+import type { Empresa, Proyecto, Cliente, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig, LineaBase, Comentario, CambioHistorial, Plantilla, PlantillaTarea } from '@/types'
 
 function clean(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined))
@@ -107,6 +107,29 @@ export async function listarTodasLasEmpresas(): Promise<Empresa[]> {
     .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
 }
 
+// ─── Clientes ────────────────────────────────────────────────────────────────
+
+export async function crearCliente(data: Omit<Cliente, 'id' | 'creadoEn'>): Promise<string> {
+  const ref = await addDoc(collection(db, 'clientes'), clean({ ...data, creadoEn: serverTimestamp() }))
+  return ref.id
+}
+
+export async function actualizarCliente(id: string, data: Partial<Cliente>) {
+  await updateDoc(doc(db, 'clientes', id), clean(data as Record<string, unknown>) as DocumentData)
+}
+
+export async function eliminarCliente(id: string) {
+  await deleteDoc(doc(db, 'clientes', id))
+}
+
+export function suscribirClientes(empresaId: string, cb: (list: Cliente[]) => void, onError?: () => void) {
+  return onSnapshot(
+    query(collection(db, 'clientes'), where('empresaId', '==', empresaId)),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Cliente))),
+    () => { cb([]); onError?.() }
+  )
+}
+
 // ─── Proyectos ────────────────────────────────────────────────────────────────
 
 export async function crearProyecto(data: Omit<Proyecto, 'id' | 'creadoEn'>): Promise<string> {
@@ -132,7 +155,7 @@ export function suscribirProyectosPorEmpresa(empresaId: string, _uid: string, cb
       .map((d) => ({ id: d.id, ...d.data() }) as Proyecto)
       .sort((a, b) => b.creadoEn?.seconds - a.creadoEn?.seconds)
     cb(proyectos)
-  })
+  }, () => cb([]))
 }
 
 // Projects shared directly with the user, queried by explicit project IDs stored in their permiso
@@ -234,6 +257,47 @@ export async function actualizarTarea(id: string, data: Partial<Tarea>) {
 
 export async function eliminarTarea(id: string) {
   await deleteDoc(doc(db, 'tareas', id))
+}
+
+export function suscribirMisTareas(
+  identificadores: string[],
+  cb: (tareas: Tarea[]) => void
+): () => void {
+  if (identificadores.length === 0) { cb([]); return () => {} }
+
+  const buckets = new Map<string, Map<string, Tarea>>()
+  const unsubs: Array<() => void> = []
+
+  const flush = () => {
+    const merged = new Map<string, Tarea>()
+    for (const bucket of buckets.values())
+      for (const [id, t] of bucket) merged.set(id, t)
+    cb(Array.from(merged.values()))
+  }
+
+  for (const ident of identificadores) {
+    for (const [campo, valor] of [
+      ['asignadoA', ident],
+      ['asignadosA', ident],
+    ] as [string, string][]) {
+      const key = `${campo}:${ident}`
+      buckets.set(key, new Map())
+      const q = campo === 'asignadoA'
+        ? query(collection(db, 'tareas'), where('asignadoA', '==', valor))
+        : query(collection(db, 'tareas'), where('asignadosA', 'array-contains', valor))
+      unsubs.push(
+        onSnapshot(q,
+          snap => {
+            buckets.set(key, new Map(snap.docs.map(d => [d.id, { id: d.id, ...d.data() } as Tarea])))
+            flush()
+          },
+          () => { buckets.set(key, new Map()); flush() }
+        )
+      )
+    }
+  }
+
+  return () => unsubs.forEach(u => u())
 }
 
 export function suscribirTareasPorProyecto(proyectoId: string, cb: (tareas: Tarea[]) => void) {
@@ -479,3 +543,145 @@ export async function eliminarPlantilla(id: string): Promise<void> {
 }
 
 export type { PlantillaTarea }
+
+// ─── Búsqueda global ─────────────────────────────────────────────────────────
+
+// ─── Portal cliente ───────────────────────────────────────────────────────────
+
+export async function crearTokenPortal(proyectoId: string, nombre: string): Promise<string> {
+  const token = crypto.randomUUID().replace(/-/g, '')
+  await setDoc(doc(db, 'portales', token), {
+    proyectoId,
+    nombre,
+    creadoEn: serverTimestamp(),
+    activo: true,
+  })
+  return token
+}
+
+export async function getPortal(token: string): Promise<{ proyectoId: string; nombre: string; activo: boolean } | null> {
+  const snap = await getDoc(doc(db, 'portales', token))
+  if (!snap.exists()) return null
+  return snap.data() as { proyectoId: string; nombre: string; activo: boolean }
+}
+
+export async function revocarPortal(token: string): Promise<void> {
+  await updateDoc(doc(db, 'portales', token), { activo: false })
+}
+
+export async function listarPortalesPorProyecto(proyectoId: string): Promise<Array<{ token: string; nombre: string; activo: boolean; creadoEn: Timestamp }>> {
+  const snap = await getDocs(query(collection(db, 'portales'), where('proyectoId', '==', proyectoId)))
+  return snap.docs.map(d => ({ token: d.id, ...d.data() } as { token: string; nombre: string; activo: boolean; creadoEn: Timestamp }))
+}
+
+export async function getProyectoPublico(proyectoId: string): Promise<Proyecto | null> {
+  const snap = await getDoc(doc(db, 'proyectos', proyectoId))
+  if (!snap.exists()) return null
+  return { id: snap.id, ...snap.data() } as Proyecto
+}
+
+export async function getTareasPublicas(proyectoId: string): Promise<Tarea[]> {
+  const snap = await getDocs(query(collection(db, 'tareas'), where('proyectoId', '==', proyectoId)))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as Tarea)
+}
+
+// ─── Búsqueda global ─────────────────────────────────────────────────────────
+
+export async function fetchTareasGlobal(empresaIds: string[]): Promise<Tarea[]> {
+  if (empresaIds.length === 0) return []
+  const chunks: string[][] = []
+  for (let i = 0; i < empresaIds.length; i += 10) chunks.push(empresaIds.slice(i, i + 10))
+  const results = await Promise.all(
+    chunks.map(ids =>
+      getDocs(query(collection(db, 'tareas'), where('empresaId', 'in', ids)))
+    )
+  )
+  return results.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() }) as Tarea))
+}
+
+export async function fetchProyectosGlobal(empresaIds: string[]): Promise<Proyecto[]> {
+  if (empresaIds.length === 0) return []
+  const chunks: string[][] = []
+  for (let i = 0; i < empresaIds.length; i += 10) chunks.push(empresaIds.slice(i, i + 10))
+  const results = await Promise.all(
+    chunks.map(ids =>
+      getDocs(query(collection(db, 'proyectos'), where('empresaId', 'in', ids)))
+    )
+  )
+  return results.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() }) as Proyecto))
+}
+
+// ─── Portal interactivo (aprobaciones, comentarios, solicitudes) ──────────────
+
+export interface Aprobacion {
+  hitoId: string
+  nombre: string
+  aprobadoEn: Timestamp
+}
+
+export interface ComentarioPortal {
+  id: string
+  texto: string
+  autor: string
+  creadoEn: Timestamp
+}
+
+export interface SolicitudCambio {
+  id: string
+  descripcion: string
+  autor: string
+  creadoEn: Timestamp
+  estado: 'pendiente' | 'revisada' | 'convertida'
+}
+
+export async function aprobarHito(token: string, hitoId: string, nombre: string): Promise<void> {
+  await setDoc(doc(db, 'portales', token, 'aprobaciones', hitoId), {
+    hitoId,
+    nombre,
+    aprobadoEn: serverTimestamp(),
+  })
+}
+
+export async function getAprobaciones(token: string): Promise<Record<string, Aprobacion>> {
+  const snap = await getDocs(collection(db, 'portales', token, 'aprobaciones'))
+  const map: Record<string, Aprobacion> = {}
+  snap.docs.forEach(d => { map[d.id] = d.data() as Aprobacion })
+  return map
+}
+
+export async function agregarComentarioPortal(token: string, texto: string, autor: string): Promise<void> {
+  await addDoc(collection(db, 'portales', token, 'comentarios'), {
+    texto,
+    autor,
+    creadoEn: serverTimestamp(),
+  })
+}
+
+export async function getComentariosPortal(token: string): Promise<ComentarioPortal[]> {
+  const snap = await getDocs(query(collection(db, 'portales', token, 'comentarios')))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as ComentarioPortal)
+    .sort((a, b) => (a.creadoEn?.seconds ?? 0) - (b.creadoEn?.seconds ?? 0))
+}
+
+export async function crearSolicitudCambio(token: string, descripcion: string, autor: string): Promise<void> {
+  await addDoc(collection(db, 'portales', token, 'solicitudes'), {
+    descripcion,
+    autor,
+    creadoEn: serverTimestamp(),
+    estado: 'pendiente',
+  })
+}
+
+export async function getSolicitudesCambio(token: string): Promise<SolicitudCambio[]> {
+  const snap = await getDocs(collection(db, 'portales', token, 'solicitudes'))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as SolicitudCambio)
+    .sort((a, b) => (b.creadoEn?.seconds ?? 0) - (a.creadoEn?.seconds ?? 0))
+}
+
+export async function actualizarEstadoSolicitud(
+  token: string,
+  solicitudId: string,
+  estado: SolicitudCambio['estado']
+): Promise<void> {
+  await updateDoc(doc(db, 'portales', token, 'solicitudes', solicitudId), { estado })
+}

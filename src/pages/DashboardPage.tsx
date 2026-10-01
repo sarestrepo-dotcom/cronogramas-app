@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, Clock, CheckCircle2, TrendingUp, Calendar, Filter } from 'lucide-react'
+import { AlertTriangle, Clock, CheckCircle2, TrendingUp, Calendar, Filter, List, Table2, Columns3, BarChart2 } from 'lucide-react'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useTareasProximas } from '@/hooks/useTareas'
 import { useTodosProyectos } from '@/hooks/useProyectos'
 import { cn, formatFecha, diasRestantes, isVencida, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS } from '@/lib/utils'
 import { COLORES_EMPRESAS } from '@/types'
-import type { Tarea } from '@/types'
+import type { Tarea, Proyecto } from '@/types'
 
 export function DashboardPage() {
   const { empresas, loading: loadingEmpresas } = useEmpresas()
@@ -65,6 +65,16 @@ export function DashboardPage() {
           </select>
         </div>
       </div>
+
+      {/* Proyectos activos — acceso rápido */}
+      {proyectos.filter(p => p.estado === 'activo').length > 0 && (
+        <ProyectosRapidos
+          proyectos={proyectos.filter(p => p.estado === 'activo').slice(0, 6)}
+          empresas={empresas}
+          empresaFiltro={empresaFiltro}
+          onNavigate={(url) => navigate(url)}
+        />
+      )}
 
       {/* Stats cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -289,6 +299,75 @@ function EmptyDashboard() {
       </div>
       <h3 className="text-lg font-semibold text-slate-900 mb-2">Todo al día</h3>
       <p className="text-slate-500 text-sm max-w-sm">No hay tareas próximas a vencer en los próximos 30 días.</p>
+    </div>
+  )
+}
+
+function ProyectosRapidos({ proyectos, empresas, empresaFiltro, onNavigate }: {
+  proyectos: Proyecto[]
+  empresas: { id: string; nombre: string; color: string }[]
+  empresaFiltro: string
+  onNavigate: (url: string) => void
+}) {
+  const filtrados = empresaFiltro === 'todas'
+    ? proyectos
+    : proyectos.filter(p => p.empresaId === empresaFiltro)
+
+  if (filtrados.length === 0) return null
+
+  const VISTAS = [
+    { key: 'lista',  label: 'Lista',  icon: <List size={11} /> },
+    { key: 'gantt',  label: 'Gantt',  icon: <BarChart2 size={11} /> },
+    { key: 'kanban', label: 'Kanban', icon: <Columns3 size={11} /> },
+    { key: 'tabla',  label: 'Tabla',  icon: <Table2 size={11} /> },
+  ] as const
+
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-slate-700 mb-3">Proyectos activos</h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtrados.map(p => {
+          const empresa = empresas.find(e => e.id === p.empresaId)
+          const colores = COLORES_EMPRESAS[empresa?.color ?? 'indigo'] ?? COLORES_EMPRESAS.indigo
+          const base = `/empresa/${p.empresaId}/proyecto/${p.id}`
+          return (
+            <div key={p.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-slate-300 hover:shadow-sm transition-all">
+              <button
+                onClick={() => onNavigate(base)}
+                className="w-full text-left px-4 pt-3.5 pb-2.5"
+              >
+                <div className="flex items-start gap-2.5 mb-2">
+                  <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5', colores.bg)}>
+                    {p.nombre[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate leading-tight">{p.nombre}</p>
+                    {empresa && (
+                      <p className="text-[11px] text-slate-400 truncate">{empresa.nombre}</p>
+                    )}
+                  </div>
+                </div>
+                {p.objetivo && (
+                  <p className="text-xs text-slate-500 truncate mb-2">{p.objetivo}</p>
+                )}
+              </button>
+              {/* Botones de vista */}
+              <div className="flex border-t border-slate-100">
+                {VISTAS.map(v => (
+                  <button
+                    key={v.key}
+                    onClick={() => onNavigate(`${base}?vista=${v.key}`)}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 text-[11px] font-medium text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  >
+                    {v.icon}
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
