@@ -8,7 +8,9 @@ export interface EmailResumen {
   body: string
 }
 
-export function generarEmailsResumen(tareas: Tarea[], hoy: Date = new Date()): EmailResumen[] {
+// `nombres`: responsables a incluir (p. ej. los configurados en Ajustes). Si se omite,
+// se genera uno por cada responsable que aparezca en las tareas.
+export function generarEmailsResumen(tareas: Tarea[], hoy: Date = new Date(), nombres?: string[]): EmailResumen[] {
   const wStart = startOfWeek(hoy, { weekStartsOn: 1 })
   const wEnd   = endOfWeek(hoy,   { weekStartsOn: 1 })
   const nStart = startOfWeek(addDays(hoy, 7), { weekStartsOn: 1 })
@@ -17,7 +19,7 @@ export function generarEmailsResumen(tareas: Tarea[], hoy: Date = new Date()): E
   const grupoMap = new Map(tareas.filter(t => t.tipo === 'grupo').map(t => [t.id, t]))
   const nonGrupo = tareas.filter(t => t.tipo !== 'grupo')
 
-  const responsables = [...new Set(
+  const responsables = nombres?.length ? nombres : [...new Set(
     nonGrupo.flatMap(t => t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : []))
   )]
 

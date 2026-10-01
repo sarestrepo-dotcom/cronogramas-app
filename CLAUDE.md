@@ -285,7 +285,7 @@ portales/{token}                   # Token UUID (sin guiones). El cliente solo h
   - ultimaEscrituraPublica         # Sello anti-spam: 1 escritura del cliente cada 3 s
   /aprobaciones/{hitoId}           # Cliente crea (solo hitos completados del proyecto)
     - hitoId, nombre, aprobadoEn
-  /comentarios/{id}                # Cliente crea; público mientras el portal esté activo
+  /comentarios/{id}                # DESACTIVADO para el cliente (solo históricos, lectura del equipo)
     - texto, autor, creadoEn
   /solicitudes/{id}                # Cliente crea; solo el equipo lee
     - descripcion, autor, creadoEn, estado
@@ -355,7 +355,7 @@ pruebas antes de cada deploy de reglas.** Principios:
   del usuario) o `tareaId`. Una query cross-empresa sin filtro es rechazada completa
   (por eso "Mis Tareas" consulta por empresa/proyecto y filtra en memoria).
 - **portales**: el cliente solo hace `get` de un portal activo (no `list`: los tokens no se
-  pueden enumerar) y escribe aprobaciones/comentarios/solicitudes validados (campos, longitudes,
+  pueden enumerar) y escribe aprobaciones/solicitudes validadas (campos, longitudes,
   hora del servidor) dentro de un batch con sello anti-spam. Nunca lee proyectos ni tareas.
 - **email_config**: solo el dueño, y `uid` debe coincidir con el ID del documento.
 - **notificaciones**: cada quien lee las suyas y solo puede cambiar `leida`. Solo se crean en el
@@ -402,8 +402,8 @@ Cloud Functions.** El token es un UUID (128 bits) en `portales/{token}`.
   (cambios hechos desde otras páginas se publican la próxima vez que se abra el proyecto).
   **Si agregas un dato al portal, agrégalo en `construirDatosPortal` — nunca abras reglas de tareas.**
 - **El cliente** lo ve en tiempo real (onSnapshot): KPIs, tareas bloqueadas con su motivo, hitos y
-  cronograma completo (Lista o Gantt solo lectura). Puede aprobar hitos completados, comentar y
-  solicitar cambios.
+  cronograma completo (Lista o Gantt solo lectura). Puede aprobar hitos completados y solicitar
+  cambios. **Los comentarios del cliente están desactivados** (UI y reglas).
 - **Solicitudes de cambio:** crean una notificación en la campana para los dueños del proyecto
   (`duenos`), en el mismo batch. El enlace abre `?portal=TOKEN` → pestaña Actividad. No hay email
   (requeriría Cloud Functions / plan Blaze).
@@ -481,14 +481,14 @@ El header del proyecto (`ProyectoDetailPage`) usa `z-40` para quedar por encima 
 - [x] Generación de link único público (UUID token)
 - [x] Vista pública: KPIs, progreso, hitos, cronograma
 - [x] Aprobación de hitos por el cliente (sin cuenta)
-- [x] Comentarios del cliente en el portal
+- [ ] ~~Comentarios del cliente en el portal~~ (desactivados a pedido, oct 2026)
 - [x] Solicitudes de cambio del cliente → el PM puede convertirlas en tarea
 - [x] Panel interno "Actividad" en PortalModal para que el PM vea todo
 
 ### Exportación y reportes
 - [x] PDF ejecutivo de cliente (portada, KPIs, progreso, hitos, ruta crítica, cronograma…)
 - [x] Exportar CSV
-- [x] Resumen email semanal (preview + envío por Gmail con App Password)
+- [x] Resumen semanal para copiar y pegar (Ajustes → Resumen semanal y dashboard del proyecto; no se envía email)
 - [x] Procesamiento AI de emails con Groq (llama-3.3-70b)
 
 ### Admin

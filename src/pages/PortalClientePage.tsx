@@ -2,13 +2,13 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   CalendarRange, CheckCircle2, Clock, AlertTriangle, Circle,
-  Calendar, ThumbsUp, MessageSquare, Send, Plus, ChevronDown, ChevronUp,
+  Calendar, ThumbsUp, Send, Plus,
   Ban, StickyNote, List, GanttChartSquare,
 } from 'lucide-react'
 import {
-  suscribirPortalPublico, suscribirAprobacionesPortal, suscribirComentariosPortal,
-  aprobarHitoPortal, comentarPortal, solicitarCambioPortal,
-  type Aprobacion, type ComentarioPortal, type PortalPublico,
+  suscribirPortalPublico, suscribirAprobacionesPortal,
+  aprobarHitoPortal, solicitarCambioPortal,
+  type Aprobacion, type PortalPublico,
 } from '@/lib/firestore'
 import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
 import { GanttVisual } from '@/components/gantt/GanttVisual'
@@ -33,15 +33,11 @@ export function PortalClientePage() {
 
   // Interacción
   const [aprobaciones, setAprobaciones] = useState<Record<string, Aprobacion>>({})
-  const [comentarios, setComentarios]   = useState<ComentarioPortal[]>([])
   const [aprobando, setAprobando]       = useState<string | null>(null)
   const [nombreCliente, setNombreCliente] = useState('')
   const [showNombre, setShowNombre]     = useState(false)
-  const [pendingAccion, setPendingAccion] = useState<'aprobar' | 'comentar' | 'solicitar' | null>(null)
+  const [pendingAccion, setPendingAccion] = useState<'aprobar' | 'solicitar' | null>(null)
   const [pendingHitoId, setPendingHitoId] = useState<string | null>(null)
-  const [nuevoComentario, setNuevoComentario] = useState('')
-  const [enviandoComentario, setEnviandoComentario] = useState(false)
-  const [showComentarios, setShowComentarios] = useState(false)
   const [showSolicitud, setShowSolicitud] = useState(false)
   const [descripcionSolicitud, setDescripcionSolicitud] = useState('')
   const [enviandoSolicitud, setEnviandoSolicitud] = useState(false)
@@ -55,7 +51,6 @@ export function PortalClientePage() {
     const unsubs = [
       suscribirPortalPublico(token, p => { setPortal(p); setEstado(p ? 'ok' : 'invalido') }),
       suscribirAprobacionesPortal(token, setAprobaciones),
-      suscribirComentariosPortal(token, setComentarios),
     ]
     return () => unsubs.forEach(u => u())
   }, [token])
@@ -78,7 +73,7 @@ export function PortalClientePage() {
   const diasProy = proyecto ? Math.round((new Date((proyecto.fechaFin as any)?.seconds * 1000).getTime() - hoy.getTime()) / 86400000) : null
 
   // Solicitar nombre antes de acción
-  const pedirNombreYHacer = (accion: 'aprobar' | 'comentar' | 'solicitar', hitoId?: string) => {
+  const pedirNombreYHacer = (accion: 'aprobar' | 'solicitar', hitoId?: string) => {
     if (nombreCliente.trim()) {
       ejecutarAccion(accion, nombreCliente.trim(), hitoId)
     } else {
@@ -88,10 +83,9 @@ export function PortalClientePage() {
     }
   }
 
-  const ejecutarAccion = (accion: 'aprobar' | 'comentar' | 'solicitar', nombre: string, hitoId?: string) => {
+  const ejecutarAccion = (accion: 'aprobar' | 'solicitar', nombre: string, hitoId?: string) => {
     setShowNombre(false)
     if (accion === 'aprobar' && hitoId) doAprobar(hitoId, nombre)
-    if (accion === 'comentar') setShowComentarios(true)
     if (accion === 'solicitar') setShowSolicitud(true)
   }
 
@@ -105,20 +99,6 @@ export function PortalClientePage() {
       setErrorAccion(mensajeError(e))
     } finally {
       setAprobando(null)
-    }
-  }
-
-  const doComentario = async () => {
-    if (!token || !nuevoComentario.trim() || !nombreCliente.trim()) return
-    setEnviandoComentario(true)
-    setErrorAccion(null)
-    try {
-      await comentarPortal(token, nuevoComentario.trim(), nombreCliente.trim())
-      setNuevoComentario('')
-    } catch (e) {
-      setErrorAccion(mensajeError(e))
-    } finally {
-      setEnviandoComentario(false)
     }
   }
 
@@ -180,15 +160,6 @@ export function PortalClientePage() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 rounded-lg transition-colors"
             >
               <Plus size={12} /> Solicitar cambio
-            </button>
-            <button
-              onClick={() => pedirNombreYHacer('comentar')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors"
-            >
-              <MessageSquare size={12} /> Comentarios
-              {comentarios.length > 0 && (
-                <span className="ml-0.5 bg-slate-200 text-slate-600 text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">{comentarios.length}</span>
-              )}
             </button>
           </div>
         </div>
@@ -328,76 +299,6 @@ export function PortalClientePage() {
             </div>
           </div>
         )}
-
-        {/* Comentarios */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <button
-            className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-50 transition-colors"
-            onClick={() => setShowComentarios(v => !v)}
-          >
-            <div className="flex items-center gap-2">
-              <MessageSquare size={15} className="text-slate-500" />
-              <span className="text-sm font-semibold text-slate-700">Comentarios</span>
-              {comentarios.length > 0 && (
-                <span className="text-[10px] font-bold bg-slate-200 text-slate-600 rounded-full px-1.5 py-0.5 leading-none">{comentarios.length}</span>
-              )}
-            </div>
-            {showComentarios ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
-          </button>
-          {showComentarios && (
-            <div className="border-t border-slate-100 px-5 py-4 space-y-4">
-              {comentarios.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-4">Sin comentarios aún. Sé el primero.</p>
-              ) : (
-                <div className="space-y-3">
-                  {comentarios.map(c => (
-                    <div key={c.id} className="flex gap-3">
-                      <div className="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0 text-xs font-bold text-indigo-600">
-                        {c.autor.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex-1 bg-slate-50 rounded-xl px-3 py-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-semibold text-slate-800">{c.autor}</span>
-                          {c.creadoEn && (
-                            <span className="text-[10px] text-slate-400">{formatFecha(c.creadoEn)}</span>
-                          )}
-                        </div>
-                        <p className="text-sm text-slate-700 leading-relaxed">{c.texto}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Nuevo comentario */}
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                {!nombreCliente && (
-                  <input
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    placeholder="Tu nombre"
-                    value={nombreCliente}
-                    onChange={e => setNombreCliente(e.target.value)}
-                  />
-                )}
-                <div className="flex gap-2">
-                  <textarea
-                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    placeholder="Escribe un comentario..."
-                    rows={2}
-                    value={nuevoComentario}
-                    onChange={e => setNuevoComentario(e.target.value)}
-                  />
-                  <button
-                    onClick={doComentario}
-                    disabled={!nuevoComentario.trim() || !nombreCliente.trim() || enviandoComentario}
-                    className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-lg transition-colors self-end"
-                  >
-                    <Send size={14} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
 
         {/* Cronograma */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">

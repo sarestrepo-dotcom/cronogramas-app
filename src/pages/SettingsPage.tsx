@@ -5,9 +5,10 @@ import { auth } from '@/lib/firebase'
 import { useAuth } from '@/hooks/useAuth'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { getInitials } from '@/lib/utils'
-import { getEmailConfig, guardarEmailConfig, enviarEmailAhora as callEnviarEmail, previewEmailSemanal, getUsuario, upsertUsuario } from '@/lib/firestore'
+import { getEmailConfig, guardarEmailConfig, getUsuario, upsertUsuario, fetchTareasDeProyectos } from '@/lib/firestore'
 import { suscribirProyectosPorEmpresa } from '@/lib/firestore'
-import { User, Lock, Bell, Shield, CheckCircle2, Mail, Plus, Trash2, Send, Eye, EyeOff, X, Loader2, Tag } from 'lucide-react'
+import { generarEmailsResumen } from '@/lib/emailUtils'
+import { User, Lock, Bell, Shield, CheckCircle2, Mail, Plus, Trash2, Copy, Check, X, Loader2, Tag, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { EmailConfig, Proyecto } from '@/types'
 
@@ -30,7 +31,7 @@ export function SettingsPage() {
           <SectionBtn icon={<User size={15} />} label="Perfil" active={section === 'perfil'} onClick={() => setSection('perfil')} />
           <SectionBtn icon={<Lock size={15} />} label="Seguridad" active={section === 'seguridad'} onClick={() => setSection('seguridad')} />
           {isAdmin && (
-            <SectionBtn icon={<Mail size={15} />} label="Email semanal" active={section === 'email'} onClick={() => setSection('email')} />
+            <SectionBtn icon={<Mail size={15} />} label="Resumen semanal" active={section === 'email'} onClick={() => setSection('email')} />
           )}
         </nav>
 
@@ -56,18 +57,16 @@ function EmailSection() {
     responsables: [], proyectosIds: [],
   })
   const [proyectos, setProyectos] = useState<Proyecto[]>([])
-  const [showPass, setShowPass] = useState(false)
   const [newNombre, setNewNombre] = useState('')
   const [newEmail, setNewEmail] = useState('')
   const [saving, setSaving] = useState(false)
-  const [sending, setSending] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [sentMsg, setSentMsg] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadingPreview, setLoadingPreview] = useState(false)
   const [previews, setPreviews] = useState<Array<{nombre: string; email: string; body: string}>>([])
   const [showPreview, setShowPreview] = useState(false)
+  const [copiado, setCopiado] = useState<number | 'todos' | null>(null)
 
   useEffect(() => {
     if (!user) return
@@ -100,7 +99,7 @@ function EmailSection() {
   }, [user?.uid, empresas.map(e => e.id).join(',')])
 
   const addResponsable = () => {
-    if (!newNombre.trim() || !newEmail.trim()) return
+    if (!newNombre.trim()) return
     setConfig(c => ({ ...c, responsables: [...c.responsables, { nombre: newNombre.trim(), email: newEmail.trim() }] }))
     setNewNombre(''); setNewEmail('')
   }
@@ -125,100 +124,55 @@ function EmailSection() {
     finally { setSaving(false) }
   }
 
-  const handleVistaPrevia = async () => {
+  // Se genera en el navegador (sin enviar nada): el resumen queda listo para copiar y pegar
+  // en el correo, WhatsApp o donde se necesite.
+  const handleGenerar = async () => {
     setLoadingPreview(true); setError('')
     try {
-      const result = await previewEmailSemanal()
+      const tareas = await fetchTareasDeProyectos(config.proyectosIds)
+      const nombres = config.responsables.map(r => r.nombre)
+      const resumenes = generarEmailsResumen(tareas, new Date(), nombres.length ? nombres : undefined)
+      const result = resumenes
+        .filter(r => !r.body.includes('Sin tareas activas esta semana.') || r.body.includes('Próxima semana'))
+        .map(r => ({
+          nombre: r.responsable,
+          email: config.responsables.find(c => c.nombre === r.responsable)?.email ?? '',
+          body: r.body,
+        }))
       if (result.length === 0) {
-        setError('No hay tareas asignadas para los responsables configurados en las fechas actuales.')
+        setError('No hay tareas esta semana ni la próxima para los responsables y proyectos seleccionados.')
         return
       }
       setPreviews(result)
       setShowPreview(true)
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? 'Error desconocido'
-      setError(`Error al generar vista previa: ${msg}`)
+    } catch {
+      setError('No se pudo generar el resumen. Intenta de nuevo.')
     } finally { setLoadingPreview(false) }
   }
 
-  const handleEnviarConCuerpos = async () => {
-    setSending(true); setError('')
-    try {
-      await callEnviarEmail(previews)
-      setSentMsg('¡Emails enviados correctamente!')
-      setShowPreview(false)
-      setTimeout(() => setSentMsg(''), 5000)
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? 'Error desconocido'
-      setError(`Error al enviar: ${msg}`)
-    } finally { setSending(false) }
+  const copiar = async (texto: string, cual: number | 'todos') => {
+    await navigator.clipboard.writeText(texto)
+    setCopiado(cual)
+    setTimeout(() => setCopiado(null), 2000)
   }
-
-  const handleEnviarAhora = async () => {
-    setSending(true); setSentMsg(''); setError('')
-    try {
-      await callEnviarEmail()
-      setSentMsg('¡Emails enviados correctamente!')
-      setTimeout(() => setSentMsg(''), 5000)
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? 'Error desconocido'
-      setError(`Error al enviar: ${msg}`)
-    } finally { setSending(false) }
-  }
+  const textoTodos = () => previews.map(p => `── ${p.nombre}${p.email ? ` <${p.email}>` : ''} ──\n\n${p.body}`).join('\n\n\n')
 
   if (loading) return <div className="flex items-center justify-center h-32"><div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>
 
   return (
     <div className="space-y-6">
-      {/* Instructions */}
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
-        <p className="text-sm font-semibold text-amber-800">⚙️ Configuración requerida (una sola vez)</p>
-        <ol className="text-xs text-amber-700 space-y-1 list-decimal list-inside">
-          <li>Ve a <strong>myaccount.google.com → Seguridad → Verificación en 2 pasos</strong> y actívala</li>
-          <li>Luego ve a <strong>Seguridad → Contraseñas de aplicación</strong></li>
-          <li>Crea una para "Correo" y copia la clave de 16 caracteres</li>
-          <li>Pega esa clave en el campo <strong>"App Password"</strong> abajo</li>
-          <li>Los emails se enviarán automáticamente cada lunes a las 8am</li>
-        </ol>
+      <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 space-y-1">
+        <p className="text-sm font-semibold text-indigo-800">📋 Resumen semanal para copiar y pegar</p>
+        <p className="text-xs text-indigo-700">
+          Elige los responsables y proyectos, y genera el resumen de la semana de cada persona.
+          No se envía nada: lo copias y lo pegas en tu correo, WhatsApp o donde lo necesites.
+        </p>
       </div>
 
       <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-            <Mail size={16} className="text-indigo-500" /> Email semanal automático
-          </h2>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-sm text-slate-600">{config.habilitado ? 'Activo' : 'Inactivo'}</span>
-            <button type="button" onClick={() => setConfig(c => ({ ...c, habilitado: !c.habilitado }))}
-              className={cn('relative w-10 h-5 rounded-full transition-colors', config.habilitado ? 'bg-indigo-600' : 'bg-slate-300')}>
-              <span className={cn('absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all',
-                config.habilitado ? 'left-5' : 'left-0.5')} />
-            </button>
-          </label>
-        </div>
-
-        {/* Gmail credentials */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">Gmail del remitente</label>
-            <input className="input-base" type="email" value={config.gmailUser}
-              onChange={e => setConfig(c => ({ ...c, gmailUser: e.target.value }))}
-              placeholder="tu@gmail.com" />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-slate-700">App Password (16 caracteres)</label>
-            <div className="relative">
-              <input className="input-base pr-10" type={showPass ? 'text' : 'password'}
-                value={config.gmailAppPassword}
-                onChange={e => setConfig(c => ({ ...c, gmailAppPassword: e.target.value }))}
-                placeholder="xxxx xxxx xxxx xxxx" />
-              <button type="button" onClick={() => setShowPass(!showPass)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-            </div>
-          </div>
-        </div>
+        <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+          <FileText size={16} className="text-indigo-500" /> Resumen semanal
+        </h2>
 
         {/* Groq API Key */}
         <div className="space-y-1.5">
@@ -241,8 +195,8 @@ function EmailSection() {
 
         {/* Responsables */}
         <div className="space-y-3">
-          <label className="text-sm font-medium text-slate-700">Responsables y sus emails</label>
-          <p className="text-xs text-slate-400">El sistema busca coincidencias entre el nombre y el campo "Responsable" de cada tarea.</p>
+          <label className="text-sm font-medium text-slate-700">Responsables</label>
+          <p className="text-xs text-slate-400">Se busca coincidencia entre el nombre y el campo "Responsable" de cada tarea. El email es opcional (solo de referencia). Sin responsables, se genera uno por cada persona asignada.</p>
           <div className="space-y-2">
             {config.responsables.map((r, i) => (
               <div key={i} className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2">
@@ -259,7 +213,7 @@ function EmailSection() {
             <input className="input-base flex-1" value={newNombre} onChange={e => setNewNombre(e.target.value)}
               placeholder="Nombre (ej: Checho)" />
             <input className="input-base flex-1" type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)}
-              placeholder="email@empresa.com"
+              placeholder="email (opcional)"
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addResponsable() } }} />
             <button type="button" onClick={addResponsable}
               className="flex-shrink-0 flex items-center gap-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm rounded-xl transition-colors">
@@ -289,7 +243,6 @@ function EmailSection() {
         )}
 
         {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{error}</p>}
-        {sentMsg && <p className="text-sm text-emerald-600 bg-emerald-50 rounded-xl px-3 py-2">✓ {sentMsg}</p>}
 
         <div className="flex items-center gap-3 pt-2 border-t border-slate-100 flex-wrap">
           <button type="submit" disabled={saving} className="btn-primary">
@@ -297,16 +250,11 @@ function EmailSection() {
           </button>
           {saved && <span className="text-sm text-emerald-600 flex items-center gap-1.5"><CheckCircle2 size={14} /> Guardado</span>}
           <div className="flex-1" />
-          <button type="button" onClick={handleVistaPrevia}
-            disabled={loadingPreview || !config.gmailUser || !config.gmailAppPassword || config.responsables.length === 0}
-            className="flex items-center gap-2 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-50">
-            {loadingPreview ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            {loadingPreview ? 'Generando...' : 'Vista previa y editar'}
-          </button>
-          <button type="button" onClick={handleEnviarAhora} disabled={sending || !config.gmailUser || !config.gmailAppPassword}
-            className="flex items-center gap-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-50">
-            <Send size={14} />
-            {sending ? 'Enviando...' : 'Enviar directo'}
+          <button type="button" onClick={handleGenerar}
+            disabled={loadingPreview || config.proyectosIds.length === 0}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors disabled:opacity-50">
+            {loadingPreview ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+            {loadingPreview ? 'Generando...' : 'Generar resumen'}
           </button>
         </div>
       </form>
@@ -319,10 +267,10 @@ function EmailSection() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 flex-shrink-0">
               <div>
                 <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
-                  <Send size={16} className="text-indigo-500" /> Vista previa de emails
+                  <FileText size={16} className="text-indigo-500" /> Resumen semanal
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {previews.length} destinatario{previews.length !== 1 ? 's' : ''} · Puedes editar el contenido antes de enviar
+                  {previews.length} persona{previews.length !== 1 ? 's' : ''} · Puedes editar el texto antes de copiarlo
                 </p>
               </div>
               <button onClick={() => setShowPreview(false)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg">
@@ -338,7 +286,11 @@ function EmailSection() {
                       {preview.nombre.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
                     </span>
                     <span className="text-sm font-semibold text-slate-800">{preview.nombre}</span>
-                    <span className="text-xs text-slate-400">{preview.email}</span>
+                    <span className="text-xs text-slate-400 flex-1 truncate">{preview.email}</span>
+                    <button onClick={() => copiar(preview.body, i)}
+                      className="flex items-center gap-1.5 text-xs border border-slate-200 hover:bg-slate-50 text-slate-600 px-2.5 py-1 rounded-lg transition-colors">
+                      {copiado === i ? <><Check size={12} className="text-emerald-500" /> Copiado</> : <><Copy size={12} /> Copiar</>}
+                    </button>
                   </div>
                   <textarea
                     className="w-full h-64 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-mono text-slate-700 resize-none focus:outline-none focus:border-indigo-400"
@@ -354,11 +306,11 @@ function EmailSection() {
             </div>
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex-shrink-0">
-              <button onClick={() => setShowPreview(false)} className="btn-secondary">Cancelar</button>
-              <button onClick={handleEnviarConCuerpos} disabled={sending}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50">
-                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                {sending ? 'Enviando...' : `Enviar ${previews.length} email${previews.length !== 1 ? 's' : ''}`}
+              <button onClick={() => setShowPreview(false)} className="btn-secondary">Cerrar</button>
+              <button onClick={() => copiar(textoTodos(), 'todos')}
+                className="btn-primary flex items-center gap-2">
+                {copiado === 'todos' ? <Check size={14} /> : <Copy size={14} />}
+                {copiado === 'todos' ? 'Copiado' : 'Copiar todos'}
               </button>
             </div>
           </div>

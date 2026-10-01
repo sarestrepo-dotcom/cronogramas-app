@@ -592,6 +592,14 @@ export async function fetchTareasGlobal(empresaIds: string[]): Promise<Tarea[]> 
   return results.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() }) as Tarea))
 }
 
+// Un query por proyecto: si se perdió acceso a uno, los demás se siguen cargando
+export async function fetchTareasDeProyectos(proyectoIds: string[]): Promise<Tarea[]> {
+  const results = await Promise.all(proyectoIds.map(pid =>
+    getDocs(query(collection(db, 'tareas'), where('proyectoId', '==', pid))).catch(() => null)
+  ))
+  return results.flatMap(snap => snap ? snap.docs.map(d => ({ id: d.id, ...d.data() }) as Tarea) : [])
+}
+
 export async function fetchProyectosGlobal(empresaIds: string[]): Promise<Proyecto[]> {
   if (empresaIds.length === 0) return []
   const chunks: string[][] = []
@@ -658,7 +666,7 @@ export async function actualizarEstadoSolicitud(
 // El cliente no puede leer proyectos ni tareas. El equipo publica en portales/{token}.publico
 // una copia filtrada (sin valor de venta, responsables, descripciones ni notas internas) que
 // ProyectoDetailPage mantiene sincronizada. El cliente solo lee ese documento (get, no list)
-// y escribe aprobaciones/comentarios/solicitudes en batches validados por firestore.rules.
+// y escribe aprobaciones/solicitudes en batches validados por firestore.rules.
 
 export interface DatosPortal {
   proyecto: { nombre: string; objetivo: string | null; estado: Proyecto['estado']; fechaInicio: Timestamp | null; fechaFin: Timestamp | null }
@@ -765,13 +773,6 @@ export function suscribirAprobacionesPortal(token: string, cb: (a: Record<string
   }, () => cb({}))
 }
 
-export function suscribirComentariosPortal(token: string, cb: (c: ComentarioPortal[]) => void): () => void {
-  return onSnapshot(collection(db, 'portales', token, 'comentarios'), snap => {
-    cb(snap.docs.map(d => ({ id: d.id, ...d.data() }) as ComentarioPortal)
-      .sort((a, b) => (a.creadoEn?.seconds ?? 0) - (b.creadoEn?.seconds ?? 0)))
-  }, () => cb([]))
-}
-
 // Toda escritura pública va en un batch que marca ultimaEscrituraPublica en el portal:
 // las reglas exigen ese sello y solo permiten uno cada 3 s (anti-spam).
 function batchPublico(token: string) {
@@ -783,12 +784,6 @@ function batchPublico(token: string) {
 export async function aprobarHitoPortal(token: string, hitoId: string, nombre: string): Promise<void> {
   const batch = batchPublico(token)
   batch.set(doc(db, 'portales', token, 'aprobaciones', hitoId), { hitoId, nombre, aprobadoEn: serverTimestamp() })
-  await batch.commit()
-}
-
-export async function comentarPortal(token: string, texto: string, autor: string): Promise<void> {
-  const batch = batchPublico(token)
-  batch.set(doc(collection(db, 'portales', token, 'comentarios')), { texto, autor, creadoEn: serverTimestamp() })
   await batch.commit()
 }
 

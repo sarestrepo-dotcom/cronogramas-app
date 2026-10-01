@@ -174,10 +174,10 @@ describe('portal público sin sesión', () => {
   test('lee su portal activo, pero no puede listar tokens ni abrir uno revocado', async () => {
     const db = anon()
     await assertSucceeds(getDoc(doc(db, 'portales/tok1')))
-    await assertSucceeds(getDocs(collection(db, 'portales/tok1/comentarios')))
+    await assertSucceeds(getDocs(collection(db, 'portales/tok1/aprobaciones')))
     await assertFails(getDocs(collection(db, 'portales')))
     await assertFails(getDoc(doc(db, 'portales/revocado')))
-    await assertFails(getDocs(collection(db, 'portales/revocado/comentarios')))
+    await assertFails(getDocs(collection(db, 'portales/revocado/aprobaciones')))
     await assertFails(getDocs(collection(db, 'portales/tok1/solicitudes')))
   })
   test('no puede leer proyectos, tareas ni otras colecciones', async () => {
@@ -190,17 +190,26 @@ describe('portal público sin sesión', () => {
     await assertFails(updateDoc(doc(anon(), 'portales/revocado'), { activo: true }))
     await assertFails(setDoc(doc(anon(), 'portales/nuevo'), { proyectoId: 'P1', activo: true }))
   })
-  test('comenta con sello anti-spam; sin sello, con campos extra o muy largo se rechaza', async () => {
-    await assertSucceeds(comentar('tok1'))
+  const solicitar = (token) => publico(token, (b, db) => b.set(doc(collection(db, 'portales', token, 'solicitudes')),
+    { descripcion: 'Cambio', autor: 'Cliente', creadoEn: serverTimestamp(), estado: 'pendiente' }))
+
+  test('comentarios desactivados: el cliente no puede comentar ni leerlos', async () => {
+    await assertFails(comentar('tok1'))
+    await assertFails(getDocs(collection(anon(), 'portales/tok1/comentarios')))
+  })
+  test('solicitud: sin sello, con campos extra, muy larga o en portal revocado se rechaza', async () => {
+    await assertFails(addDoc(collection(anon(), 'portales/tok1/solicitudes'), { descripcion: 'x', autor: 'y', creadoEn: serverTimestamp(), estado: 'pendiente' }))
+    await assertFails(publico('tok1', (b, db) => b.set(doc(collection(db, 'portales/tok1/solicitudes')),
+      { descripcion: 'x'.repeat(4001), autor: 'y', creadoEn: serverTimestamp(), estado: 'pendiente' })))
     await enfriar()
-    await assertFails(addDoc(collection(anon(), 'portales/tok1/comentarios'), { texto: 'x', autor: 'y', creadoEn: serverTimestamp() }))
-    await assertFails(comentar('tok1', { texto: 'x'.repeat(2001), autor: 'y', creadoEn: serverTimestamp() }))
-    await assertFails(comentar('tok1', { texto: 'x', autor: 'y', creadoEn: serverTimestamp(), admin: true }))
-    await assertFails(comentar('revocado'))
+    await assertFails(publico('tok1', (b, db) => b.set(doc(collection(db, 'portales/tok1/solicitudes')),
+      { descripcion: 'x', autor: 'y', creadoEn: serverTimestamp(), estado: 'pendiente', admin: true })))
+    await enfriar()
+    await assertFails(solicitar('revocado'))
   })
   test('anti-spam: segunda escritura en menos de 3 s se rechaza', async () => {
-    await assertSucceeds(comentar('tok1'))
-    await assertFails(comentar('tok1'))
+    await assertSucceeds(solicitar('tok1'))
+    await assertFails(solicitar('tok1'))
   })
   test('aprueba solo hitos completados del propio proyecto', async () => {
     const aprobar = (hitoId) => publico('tok1', (b, db) =>

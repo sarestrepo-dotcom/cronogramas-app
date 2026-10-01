@@ -207,7 +207,7 @@ service cloud.firestore {
     // El cliente (sin cuenta) NO lee proyectos ni tareas. El equipo publica en
     // portales/{token}.publico una copia filtrada; el cliente solo puede hacer `get` de
     // su portal (no `list`: los tokens no se pueden enumerar) mientras esté activo.
-    // Sus escrituras (aprobar, comentar, solicitar) van en un batch que sella
+    // Sus escrituras (aprobar hitos, solicitar cambios) van en un batch que sella
     // ultimaEscrituraPublica = request.time, con mínimo 3 s entre escrituras (anti-spam).
 
     function portalPath(token) {
@@ -263,14 +263,9 @@ service cloud.firestore {
         allow update, delete: if equipoDelPortal(token);
       }
 
+      // Comentarios del cliente desactivados: solo el equipo ve/borra los históricos
       match /comentarios/{cId} {
-        allow read: if portalActivo(token) || equipoDelPortal(token);
-        allow create: if portalActivo(token) && escrituraPublicaSellada(token) &&
-          request.resource.data.keys().hasOnly(['texto', 'autor', 'creadoEn']) &&
-          textoValido(request.resource.data.texto, 2000) &&
-          textoValido(request.resource.data.autor, 100) &&
-          request.resource.data.creadoEn == request.time;
-        allow update, delete: if equipoDelPortal(token);
+        allow read, delete: if equipoDelPortal(token);
       }
 
       // Solicitudes de cambio: el cliente crea, solo el equipo las lee
