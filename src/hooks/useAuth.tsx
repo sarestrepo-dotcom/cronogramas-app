@@ -6,12 +6,13 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   sendPasswordResetEmail,
+  sendEmailVerification,
   updateProfile,
   type User,
 } from 'firebase/auth'
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from '@/lib/firebase'
-import { getPermiso, contarPermitidos, crearPermiso } from '@/lib/firestore'
+import { getPermiso } from '@/lib/firestore'
 import type { UsuarioPermitido } from '@/types'
 
 interface AuthContextValue {
@@ -64,26 +65,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (u) {
         setLoading(true)
-        await syncUsuario(u)
+
+        // Las reglas de Firestore exigen email verificado: sin esto, alguien podría
+        // registrarse con email/password usando el correo de un usuario permitido.
+        if (!u.emailVerified) {
+          try { await sendEmailVerification(u) } catch { /* ya enviado recientemente */ }
+          rechazandoRef.current = true
+          setAccesoError(`Te enviamos un correo de verificación a ${u.email}. Ábrelo, confirma tu cuenta y vuelve a iniciar sesión.`)
+          setUser(null)
+          setPermiso(null)
+          await signOut(auth)
+          setLoading(false)
+          return
+        }
 
         const email = u.email ?? ''
-        let p = await getPermiso(email)
-
-        if (!p) {
-          // Bootstrap: if whitelist is completely empty, first login becomes admin
-          const total = await contarPermitidos()
-          if (total === 0) {
-            await crearPermiso({
-              email,
-              nombre: u.displayName ?? email,
-              rol: 'admin',
-              activo: true,
-              empresas: [],
-              agregadoPor: 'bootstrap',
-            })
-            p = await getPermiso(email)
-          }
-        }
+        const p = await getPermiso(email).catch(() => null)
 
         if (!p) {
           rechazandoRef.current = true
@@ -105,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
+        await syncUsuario(u)
         setAccesoError(null)
         setUser(u)
         setPermiso(p)
@@ -130,8 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const registerEmail = async (email: string, password: string, nombre: string) => {
     setAccesoError(null)
     const { user } = await createUserWithEmailAndPassword(auth, email, password)
-    await updateProfile(user, { displayName: nombre })
-    await syncUsuario(user)
+    // El correo de verificación lo envía onAuthStateChanged; el perfil se
+    // sincroniza en el primer login ya verificado.
+    await updateProfile(user, { displayName: nombre }).catch(() => {})
   }
 
   const logout = async () => {

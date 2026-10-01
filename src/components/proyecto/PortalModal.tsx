@@ -7,6 +7,7 @@ import {
 } from '@/lib/firestore'
 import { crearTarea } from '@/lib/firestore'
 import type { Timestamp } from 'firebase/firestore'
+import type { Proyecto, Tarea } from '@/types'
 import { cn, formatFecha } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 
@@ -20,7 +21,13 @@ interface Portal {
 interface PortalModalProps {
   proyectoId: string
   empresaId: string
+  /** Para publicar la copia filtrada del cronograma al crear el enlace */
+  proyecto: Proyecto
+  tareas: Tarea[]
+  onPortalesCambiados?: () => void
   onClose: () => void
+  /** Abre directamente la pestaña Actividad de este portal (p. ej. desde una notificación) */
+  tokenActividad?: string
 }
 
 type Tab = 'links' | 'actividad'
@@ -31,15 +38,15 @@ const ESTADO_SOLICITUD: Record<SolicitudCambio['estado'], { label: string; color
   convertida: { label: 'Convertida', color: 'text-emerald-600 bg-emerald-50', icon: <CheckCircle2 size={11} /> },
 }
 
-export function PortalModal({ proyectoId, empresaId, onClose }: PortalModalProps) {
+export function PortalModal({ proyectoId, empresaId, proyecto, tareas, onPortalesCambiados, onClose, tokenActividad }: PortalModalProps) {
   const { toast } = useToast()
-  const [tab, setTab] = useState<Tab>('links')
+  const [tab, setTab] = useState<Tab>(tokenActividad ? 'actividad' : 'links')
   const [portales, setPortales]       = useState<Portal[]>([])
   const [loading, setLoading]         = useState(true)
   const [nombre, setNombre]           = useState('Portal cliente')
   const [creating, setCreating]       = useState(false)
   const [copied, setCopied]           = useState<string | null>(null)
-  const [activeToken, setActiveToken] = useState<string | null>(null)
+  const [activeToken, setActiveToken] = useState<string | null>(tokenActividad ?? null)
   const [aprobaciones, setAprobaciones] = useState<Record<string, Aprobacion>>({})
   const [comentarios, setComentarios]   = useState<ComentarioPortal[]>([])
   const [solicitudes, setSolicitudes]   = useState<SolicitudCambio[]>([])
@@ -79,9 +86,10 @@ export function PortalModal({ proyectoId, empresaId, onClose }: PortalModalProps
   const crear = async () => {
     if (!nombre.trim()) return
     setCreating(true)
-    const token = await crearTokenPortal(proyectoId, nombre.trim())
+    const token = await crearTokenPortal(proyecto, nombre.trim(), tareas)
     setNombre('Portal cliente')
     await cargar()
+    onPortalesCambiados?.()
     setActiveToken(token)
     setCreating(false)
   }
@@ -91,6 +99,7 @@ export function PortalModal({ proyectoId, empresaId, onClose }: PortalModalProps
     await revocarPortal(token)
     if (activeToken === token) setActiveToken(null)
     await cargar()
+    onPortalesCambiados?.()
   }
 
   const copiar = (token: string) => {

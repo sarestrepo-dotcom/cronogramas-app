@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, CheckCheck, AlertTriangle, Clock, Calendar, ArrowRight } from 'lucide-react'
+import { Bell, CheckCheck, AlertTriangle, Clock, Calendar, ArrowRight, MessageSquarePlus } from 'lucide-react'
+import type { NotificacionApp } from '@/lib/firestore'
 import { cn } from '@/lib/utils'
 import { useNotificaciones, type Notificacion, type NivelNotif } from '@/hooks/useNotificaciones'
 
@@ -16,7 +17,7 @@ interface Props {
 }
 
 export function NotificacionesPanel({ onClose }: Props) {
-  const { notificaciones, noLeidas, marcarLeida, marcarTodasLeidas } = useNotificaciones()
+  const { notificaciones, noLeidas, marcarLeida, marcarTodasLeidas, solicitudes, marcarSolicitudLeida, totalNoLeidas } = useNotificaciones()
   const navigate = useNavigate()
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -34,6 +35,14 @@ export function NotificacionesPanel({ onClose }: Props) {
     onClose()
   }
 
+  const irSolicitud = (s: NotificacionApp) => {
+    if (!s.leida) marcarSolicitudLeida(s.id)
+    navigate(`/empresa/${s.empresaId}/proyecto/${s.proyectoId}${s.portalToken ? `?portal=${s.portalToken}` : ''}`)
+    onClose()
+  }
+  // Solo se muestran las últimas 10 solicitudes (las no leídas siempre primero)
+  const solicitudesVisibles = [...solicitudes].sort((a, b) => Number(a.leida) - Number(b.leida)).slice(0, 10)
+
   const NIVELES: NivelNotif[] = ['vencida', 'hoy', 'manana', 'semana']
   const grupos = NIVELES.map(nivel => ({
     nivel,
@@ -50,13 +59,13 @@ export function NotificacionesPanel({ onClose }: Props) {
         <div className="flex items-center gap-2">
           <Bell size={14} className="text-slate-500" />
           <span className="text-sm font-semibold text-slate-800">Notificaciones</span>
-          {noLeidas.length > 0 && (
+          {totalNoLeidas > 0 && (
             <span className="text-[10px] font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 leading-none">
-              {noLeidas.length}
+              {totalNoLeidas}
             </span>
           )}
         </div>
-        {noLeidas.length > 0 && (
+        {totalNoLeidas > 0 && (
           <button
             onClick={marcarTodasLeidas}
             className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-indigo-600 transition-colors"
@@ -68,7 +77,31 @@ export function NotificacionesPanel({ onClose }: Props) {
 
       {/* Lista */}
       <div className="overflow-y-auto flex-1">
-        {grupos.length === 0 ? (
+        {solicitudesVisibles.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+              <MessageSquarePlus size={12} /> Solicitudes de cambio
+            </div>
+            {solicitudesVisibles.map(s => (
+              <button
+                key={s.id}
+                onClick={() => irSolicitud(s)}
+                className={cn(
+                  'w-full flex items-start gap-3 px-4 py-2.5 text-left hover:bg-slate-50 transition-colors border-b border-slate-100',
+                  s.leida && 'opacity-50'
+                )}
+              >
+                <div className={cn('w-2 h-2 rounded-full flex-shrink-0 mt-1', s.leida ? 'bg-slate-200' : 'bg-indigo-500')} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-slate-800 leading-snug truncate">{s.titulo}</p>
+                  <p className="text-[11px] text-slate-500 leading-snug line-clamp-2">{s.mensaje}</p>
+                </div>
+                <ArrowRight size={11} className="text-slate-300 flex-shrink-0 mt-1" />
+              </button>
+            ))}
+          </div>
+        )}
+        {grupos.length === 0 && solicitudesVisibles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center px-4">
             <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mb-3">
               <CheckCheck size={20} className="text-emerald-500" />
@@ -123,9 +156,9 @@ export function NotificacionesPanel({ onClose }: Props) {
 // ─── Bell button ─────────────────────────────────────────────────────────────
 
 export function NotificacionesBell() {
-  const { noLeidas } = useNotificaciones()
+  const { totalNoLeidas } = useNotificaciones()
   const [open, setOpen] = useState(false)
-  const count = noLeidas.length
+  const count = totalNoLeidas
 
   return (
     <div className="relative">

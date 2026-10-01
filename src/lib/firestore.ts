@@ -16,6 +16,7 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  writeBatch,
   type DocumentData,
 } from 'firebase/firestore'
 import { db, functions } from './firebase'
@@ -259,43 +260,47 @@ export async function eliminarTarea(id: string) {
   await deleteDoc(doc(db, 'tareas', id))
 }
 
+// Tareas del usuario: se consultan solo las empresas y proyectos compartidos a los que
+// tiene acceso (las reglas no permiten buscar en todas las tareas) y se filtran en memoria
+// por responsable (email, displayName o alias).
 export function suscribirMisTareas(
   identificadores: string[],
+  empresaIds: string[],
+  proyectoIdsCompartidos: string[],
   cb: (tareas: Tarea[]) => void
 ): () => void {
-  if (identificadores.length === 0) { cb([]); return () => {} }
+  if (identificadores.length === 0 || (empresaIds.length === 0 && proyectoIdsCompartidos.length === 0)) {
+    cb([]); return () => {}
+  }
 
-  const buckets = new Map<string, Map<string, Tarea>>()
-  const unsubs: Array<() => void> = []
+  const idents = new Set(identificadores)
+  const esMia = (t: Tarea) =>
+    (!!t.asignadoA && idents.has(t.asignadoA)) || (t.asignadosA ?? []).some(a => idents.has(a))
 
+  const buckets = new Map<string, Tarea[]>()
   const flush = () => {
     const merged = new Map<string, Tarea>()
-    for (const bucket of buckets.values())
-      for (const [id, t] of bucket) merged.set(id, t)
-    cb(Array.from(merged.values()))
+    for (const list of buckets.values()) for (const t of list) merged.set(t.id, t)
+    cb(Array.from(merged.values()).filter(esMia))
   }
 
-  for (const ident of identificadores) {
-    for (const [campo, valor] of [
-      ['asignadoA', ident],
-      ['asignadosA', ident],
-    ] as [string, string][]) {
-      const key = `${campo}:${ident}`
-      buckets.set(key, new Map())
-      const q = campo === 'asignadoA'
-        ? query(collection(db, 'tareas'), where('asignadoA', '==', valor))
-        : query(collection(db, 'tareas'), where('asignadosA', 'array-contains', valor))
-      unsubs.push(
-        onSnapshot(q,
-          snap => {
-            buckets.set(key, new Map(snap.docs.map(d => [d.id, { id: d.id, ...d.data() } as Tarea])))
-            flush()
-          },
-          () => { buckets.set(key, new Map()); flush() }
-        )
-      )
-    }
+  const consultas: Array<[string, ReturnType<typeof query>]> = []
+  for (let i = 0; i < empresaIds.length; i += 10) {
+    const chunk = empresaIds.slice(i, i + 10)
+    consultas.push([`e:${chunk.join(',')}`, query(collection(db, 'tareas'), where('empresaId', 'in', chunk))])
   }
+  // Un query por proyecto: si se perdió acceso a uno, los demás siguen funcionando
+  for (const pid of proyectoIdsCompartidos) {
+    consultas.push([`p:${pid}`, query(collection(db, 'tareas'), where('proyectoId', '==', pid))])
+  }
+
+  const unsubs = consultas.map(([key, q]) => {
+    buckets.set(key, [])
+    return onSnapshot(q,
+      snap => { buckets.set(key, snap.docs.map(d => ({ id: d.id, ...(d.data() as object) }) as Tarea)); flush() },
+      () => { buckets.set(key, []); flush() }
+    )
+  })
 
   return () => unsubs.forEach(u => u())
 }
@@ -391,11 +396,6 @@ export async function getPermiso(email: string): Promise<UsuarioPermitido | null
   const snap = await getDoc(doc(db, 'usuarios_permitidos', email))
   if (!snap.exists()) return null
   return snap.data() as UsuarioPermitido
-}
-
-export async function contarPermitidos(): Promise<number> {
-  const snap = await getDocs(collection(db, 'usuarios_permitidos'))
-  return snap.size
 }
 
 export async function crearPermiso(data: Omit<UsuarioPermitido, 'creadoEn'>): Promise<void> {
@@ -548,41 +548,34 @@ export type { PlantillaTarea }
 
 // ─── Portal cliente ───────────────────────────────────────────────────────────
 
-export async function crearTokenPortal(proyectoId: string, nombre: string): Promise<string> {
+export async function crearTokenPortal(proyecto: Proyecto, nombre: string, tareas: Tarea[]): Promise<string> {
   const token = crypto.randomUUID().replace(/-/g, '')
+  const datos = construirDatosPortal(proyecto, tareas)
   await setDoc(doc(db, 'portales', token), {
-    proyectoId,
+    proyectoId: proyecto.id,
+    empresaId: proyecto.empresaId,
     nombre,
     creadoEn: serverTimestamp(),
     activo: true,
+    duenos: duenosProyecto(proyecto),
+    publico: { ...datos, actualizadoEn: serverTimestamp() },
+    publicoHash: hashDatosPortal(datos),
   })
   return token
-}
-
-export async function getPortal(token: string): Promise<{ proyectoId: string; nombre: string; activo: boolean } | null> {
-  const snap = await getDoc(doc(db, 'portales', token))
-  if (!snap.exists()) return null
-  return snap.data() as { proyectoId: string; nombre: string; activo: boolean }
 }
 
 export async function revocarPortal(token: string): Promise<void> {
   await updateDoc(doc(db, 'portales', token), { activo: false })
 }
 
-export async function listarPortalesPorProyecto(proyectoId: string): Promise<Array<{ token: string; nombre: string; activo: boolean; creadoEn: Timestamp }>> {
+export interface PortalResumen { token: string; nombre: string; activo: boolean; creadoEn: Timestamp; publicoHash?: string }
+
+export async function listarPortalesPorProyecto(proyectoId: string): Promise<PortalResumen[]> {
   const snap = await getDocs(query(collection(db, 'portales'), where('proyectoId', '==', proyectoId)))
-  return snap.docs.map(d => ({ token: d.id, ...d.data() } as { token: string; nombre: string; activo: boolean; creadoEn: Timestamp }))
-}
-
-export async function getProyectoPublico(proyectoId: string): Promise<Proyecto | null> {
-  const snap = await getDoc(doc(db, 'proyectos', proyectoId))
-  if (!snap.exists()) return null
-  return { id: snap.id, ...snap.data() } as Proyecto
-}
-
-export async function getTareasPublicas(proyectoId: string): Promise<Tarea[]> {
-  const snap = await getDocs(query(collection(db, 'tareas'), where('proyectoId', '==', proyectoId)))
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as Tarea)
+  return snap.docs.map(d => {
+    const { nombre, activo, creadoEn, publicoHash } = d.data()
+    return { token: d.id, nombre, activo, creadoEn, publicoHash }
+  })
 }
 
 // ─── Búsqueda global ─────────────────────────────────────────────────────────
@@ -634,14 +627,6 @@ export interface SolicitudCambio {
   estado: 'pendiente' | 'revisada' | 'convertida'
 }
 
-export async function aprobarHito(token: string, hitoId: string, nombre: string): Promise<void> {
-  await setDoc(doc(db, 'portales', token, 'aprobaciones', hitoId), {
-    hitoId,
-    nombre,
-    aprobadoEn: serverTimestamp(),
-  })
-}
-
 export async function getAprobaciones(token: string): Promise<Record<string, Aprobacion>> {
   const snap = await getDocs(collection(db, 'portales', token, 'aprobaciones'))
   const map: Record<string, Aprobacion> = {}
@@ -649,27 +634,10 @@ export async function getAprobaciones(token: string): Promise<Record<string, Apr
   return map
 }
 
-export async function agregarComentarioPortal(token: string, texto: string, autor: string): Promise<void> {
-  await addDoc(collection(db, 'portales', token, 'comentarios'), {
-    texto,
-    autor,
-    creadoEn: serverTimestamp(),
-  })
-}
-
 export async function getComentariosPortal(token: string): Promise<ComentarioPortal[]> {
   const snap = await getDocs(query(collection(db, 'portales', token, 'comentarios')))
   return snap.docs.map(d => ({ id: d.id, ...d.data() }) as ComentarioPortal)
     .sort((a, b) => (a.creadoEn?.seconds ?? 0) - (b.creadoEn?.seconds ?? 0))
-}
-
-export async function crearSolicitudCambio(token: string, descripcion: string, autor: string): Promise<void> {
-  await addDoc(collection(db, 'portales', token, 'solicitudes'), {
-    descripcion,
-    autor,
-    creadoEn: serverTimestamp(),
-    estado: 'pendiente',
-  })
 }
 
 export async function getSolicitudesCambio(token: string): Promise<SolicitudCambio[]> {
@@ -684,4 +652,193 @@ export async function actualizarEstadoSolicitud(
   estado: SolicitudCambio['estado']
 ): Promise<void> {
   await updateDoc(doc(db, 'portales', token, 'solicitudes', solicitudId), { estado })
+}
+
+// ─── Portal público (cliente sin cuenta) ─────────────────────────────────────
+// El cliente no puede leer proyectos ni tareas. El equipo publica en portales/{token}.publico
+// una copia filtrada (sin valor de venta, responsables, descripciones ni notas internas) que
+// ProyectoDetailPage mantiene sincronizada. El cliente solo lee ese documento (get, no list)
+// y escribe aprobaciones/comentarios/solicitudes en batches validados por firestore.rules.
+
+export interface DatosPortal {
+  proyecto: { nombre: string; objetivo: string | null; estado: Proyecto['estado']; fechaInicio: Timestamp | null; fechaFin: Timestamp | null }
+  tareas: Tarea[]
+}
+
+export interface PortalPublico {
+  nombrePortal: string
+  proyectoId: string
+  empresaId?: string
+  duenos: string[]
+  datos: DatosPortal | null
+}
+
+export function duenosProyecto(p: Proyecto): string[] {
+  const owners = Object.entries(p.miembros ?? {}).filter(([, rol]) => rol === 'owner').map(([uid]) => uid)
+  return owners.length > 0 ? owners : (p.creadoPor ? [p.creadoPor] : [])
+}
+
+export function construirDatosPortal(p: Proyecto, tareas: Tarea[]): DatosPortal {
+  return {
+    proyecto: {
+      nombre: p.nombre,
+      objetivo: p.objetivo ?? null,
+      estado: p.estado,
+      fechaInicio: p.fechaInicio ?? null,
+      fechaFin: p.fechaFin ?? null,
+    },
+    tareas: tareas.map(t => ({
+      id: t.id,
+      titulo: t.titulo,
+      tipo: t.tipo ?? 'tarea',
+      parentId: t.parentId ?? null,
+      orden: t.orden ?? null,
+      estado: t.estado,
+      prioridad: t.prioridad ?? 'media',
+      progreso: t.progreso ?? 0,
+      fase: t.fase ?? null,
+      dependencias: t.dependencias ?? [],
+      fechaInicio: t.fechaInicio ?? null,
+      fechaFin: t.fechaFin ?? null,
+      // Las notas solo se publican como motivo de bloqueo
+      notas: t.estado === 'bloqueada' ? (t.notas ?? null) : null,
+    }) as unknown as Tarea),
+  }
+}
+
+export function hashDatosPortal(datos: DatosPortal): string {
+  const json = JSON.stringify(datos, (_k, v) => (v instanceof Timestamp ? v.toMillis() : v))
+  let h = 5381
+  for (let i = 0; i < json.length; i++) h = ((h << 5) + h + json.charCodeAt(i)) | 0
+  return `${json.length}-${(h >>> 0).toString(36)}`
+}
+
+// Actualiza la copia pública de los portales activos si cambió. Devuelve el hash publicado.
+export async function publicarPortales(proyecto: Proyecto, tareas: Tarea[], portales: PortalResumen[]): Promise<string | null> {
+  const activos = portales.filter(p => p.activo)
+  if (activos.length === 0) return null
+  const datos = construirDatosPortal(proyecto, tareas)
+  const hash = hashDatosPortal(datos)
+  const pendientes = activos.filter(p => p.publicoHash !== hash)
+  if (pendientes.length === 0) return hash
+  const batch = writeBatch(db)
+  for (const p of pendientes) {
+    batch.update(doc(db, 'portales', p.token), {
+      empresaId: proyecto.empresaId,
+      duenos: duenosProyecto(proyecto),
+      publico: { ...datos, actualizadoEn: serverTimestamp() },
+      publicoHash: hash,
+    })
+  }
+  await batch.commit()
+  return hash
+}
+
+const sinNulls = <T extends object>(o: T): T =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v === null ? undefined : v])) as T
+
+export function suscribirPortalPublico(token: string, cb: (p: PortalPublico | null) => void): () => void {
+  return onSnapshot(doc(db, 'portales', token), snap => {
+    const d = snap.data()
+    if (!snap.exists() || !d || d.activo !== true) { cb(null); return }
+    const publico = d.publico as (DatosPortal & { actualizadoEn?: Timestamp }) | undefined
+    cb({
+      nombrePortal: d.nombre,
+      proyectoId: d.proyectoId,
+      empresaId: d.empresaId,
+      duenos: d.duenos ?? [],
+      datos: publico
+        ? {
+            proyecto: publico.proyecto,
+            tareas: (publico.tareas ?? []).map(t => sinNulls(t)),
+          }
+        : null,
+    })
+  }, () => cb(null))
+}
+
+export function suscribirAprobacionesPortal(token: string, cb: (a: Record<string, Aprobacion>) => void): () => void {
+  return onSnapshot(collection(db, 'portales', token, 'aprobaciones'), snap => {
+    const map: Record<string, Aprobacion> = {}
+    snap.docs.forEach(d => { map[d.id] = d.data() as Aprobacion })
+    cb(map)
+  }, () => cb({}))
+}
+
+export function suscribirComentariosPortal(token: string, cb: (c: ComentarioPortal[]) => void): () => void {
+  return onSnapshot(collection(db, 'portales', token, 'comentarios'), snap => {
+    cb(snap.docs.map(d => ({ id: d.id, ...d.data() }) as ComentarioPortal)
+      .sort((a, b) => (a.creadoEn?.seconds ?? 0) - (b.creadoEn?.seconds ?? 0)))
+  }, () => cb([]))
+}
+
+// Toda escritura pública va en un batch que marca ultimaEscrituraPublica en el portal:
+// las reglas exigen ese sello y solo permiten uno cada 3 s (anti-spam).
+function batchPublico(token: string) {
+  const batch = writeBatch(db)
+  batch.update(doc(db, 'portales', token), { ultimaEscrituraPublica: serverTimestamp() })
+  return batch
+}
+
+export async function aprobarHitoPortal(token: string, hitoId: string, nombre: string): Promise<void> {
+  const batch = batchPublico(token)
+  batch.set(doc(db, 'portales', token, 'aprobaciones', hitoId), { hitoId, nombre, aprobadoEn: serverTimestamp() })
+  await batch.commit()
+}
+
+export async function comentarPortal(token: string, texto: string, autor: string): Promise<void> {
+  const batch = batchPublico(token)
+  batch.set(doc(collection(db, 'portales', token, 'comentarios')), { texto, autor, creadoEn: serverTimestamp() })
+  await batch.commit()
+}
+
+// Crea la solicitud y una notificación (campana) para cada dueño del proyecto
+export async function solicitarCambioPortal(token: string, portal: PortalPublico, descripcion: string, autor: string): Promise<void> {
+  const batch = batchPublico(token)
+  const solRef = doc(collection(db, 'portales', token, 'solicitudes'))
+  batch.set(solRef, { descripcion, autor, creadoEn: serverTimestamp(), estado: 'pendiente' })
+  const nombreProyecto = portal.datos?.proyecto.nombre ?? 'el proyecto'
+  for (const uid of portal.duenos) {
+    batch.set(doc(collection(db, 'notificaciones')), {
+      uid,
+      tipo: 'solicitud_cambio',
+      proyectoId: portal.proyectoId,
+      empresaId: portal.empresaId ?? '',
+      portalToken: token,
+      solicitudId: solRef.id,
+      titulo: `Solicitud de cambio en ${nombreProyecto}`.slice(0, 200),
+      mensaje: `${autor}: ${descripcion}`.slice(0, 300),
+      leida: false,
+      creadoEn: serverTimestamp(),
+    })
+  }
+  await batch.commit()
+}
+
+// ─── Notificaciones in-app (las crea el portal al recibir una solicitud) ──────
+
+export interface NotificacionApp {
+  id: string
+  uid: string
+  tipo: 'solicitud_cambio'
+  proyectoId: string
+  empresaId: string
+  portalToken?: string
+  titulo: string
+  mensaje: string
+  leida: boolean
+  creadoEn: Timestamp
+}
+
+export function suscribirNotificacionesApp(uid: string, cb: (n: NotificacionApp[]) => void): () => void {
+  const q = query(collection(db, 'notificaciones'), where('uid', '==', uid))
+  return onSnapshot(q, snap => {
+    cb(snap.docs
+      .map(d => ({ id: d.id, ...d.data() }) as NotificacionApp)
+      .sort((a, b) => (b.creadoEn?.seconds ?? 0) - (a.creadoEn?.seconds ?? 0)))
+  }, () => cb([]))
+}
+
+export async function marcarNotificacionAppLeida(id: string): Promise<void> {
+  await updateDoc(doc(db, 'notificaciones', id), { leida: true })
 }

@@ -36,6 +36,37 @@ interface EmailConfig {
   uid: string
 }
 
+// ─── Control de acceso (Admin SDK ignora las reglas: validar aquí) ───────────
+
+// Usuario de la lista blanca, activo y con email verificado
+async function usuarioActivo(auth: { uid: string; token: { email?: string; email_verified?: boolean } } | undefined) {
+  if (!auth?.token.email || auth.token.email_verified !== true) return null
+  const snap = await db.collection('usuarios_permitidos').doc(auth.token.email).get()
+  if (!snap.exists || snap.data()?.activo !== true) return null
+  return { uid: auth.uid, email: auth.token.email, permiso: snap.data() as { empresas?: string[] } }
+}
+
+async function tieneAccesoProyecto(uid: string, empresasPermitidas: string[], proyectoId: string): Promise<boolean> {
+  if (typeof proyectoId !== 'string' || !proyectoId) return false
+  const proy = await db.collection('proyectos').doc(proyectoId).get()
+  if (!proy.exists) return false
+  const p = proy.data()!
+  if (p.miembros?.[uid]) return true
+  if (empresasPermitidas.includes(p.empresaId)) return true
+  const emp = await db.collection('empresas').doc(p.empresaId).get()
+  return !!emp.data()?.miembros?.[uid]
+}
+
+async function filtrarProyectosAccesibles(uid: string, proyectosIds: string[]): Promise<string[]> {
+  const email = (await admin.auth().getUser(uid).catch(() => null))?.email
+  if (!email) return []
+  const permiso = await db.collection('usuarios_permitidos').doc(email).get()
+  if (!permiso.exists || permiso.data()?.activo !== true) return []
+  const empresas = (permiso.data()?.empresas ?? []) as string[]
+  const ok = await Promise.all(proyectosIds.map(id => tieneAccesoProyecto(uid, empresas, id)))
+  return proyectosIds.filter((_, i) => ok[i])
+}
+
 // ─── Email generation ─────────────────────────────────────────────────────────
 
 function formatDate(ts: Timestamp): string {
@@ -152,8 +183,10 @@ async function procesarConfig(config: EmailConfig, hoy: Date) {
 
   // Fetch tasks for the configured projects
   let tareas: Tarea[] = []
-  if (config.proyectosIds && config.proyectosIds.length > 0) {
-    const chunks = config.proyectosIds.slice(0, 10)
+  // proyectosIds lo escribe el usuario: limitar a proyectos a los que realmente tiene acceso
+  const permitidos = config.proyectosIds?.length ? await filtrarProyectosAccesibles(config.uid, config.proyectosIds) : []
+  if (permitidos.length > 0) {
+    const chunks = permitidos.slice(0, 10)
     const snap = await db.collection('tareas')
       .where('proyectoId', 'in', chunks)
       .get()
@@ -212,8 +245,9 @@ async function enviarEmail(
 
 async function generarPreviews(config: EmailConfig, hoy: Date): Promise<Array<{nombre: string; email: string; body: string}>> {
   let tareas: Tarea[] = []
-  if (config.proyectosIds && config.proyectosIds.length > 0) {
-    const chunks = config.proyectosIds.slice(0, 10)
+  const permitidos = config.proyectosIds?.length ? await filtrarProyectosAccesibles(config.uid, config.proyectosIds) : []
+  if (permitidos.length > 0) {
+    const chunks = permitidos.slice(0, 10)
     const snap = await db.collection('tareas').where('proyectoId', 'in', chunks).get()
     tareas = snap.docs.map(d => ({ id: d.id, ...d.data() } as Tarea))
   }
@@ -284,12 +318,17 @@ export const parsearEmailRespuesta = functionsV1
       throw new functionsV1.https.HttpsError('invalid-argument', 'emailText y proyectoId son requeridos')
     }
 
+    const usuario = await usuarioActivo(context.auth)
+    if (!usuario || !(await tieneAccesoProyecto(usuario.uid, usuario.permiso.empresas ?? [], proyectoId))) {
+      throw new functionsV1.https.HttpsError('permission-denied', 'Sin acceso a este proyecto')
+    }
+
     // Get the admin's email config (API key)
     const uid = context.auth.uid
     const configSnap = await db.collection('email_config').doc(uid).get()
     if (!configSnap.exists) throw new functionsV1.https.HttpsError('not-found', 'Sin configuración de email')
 
-    const config = configSnap.data() as EmailConfig
+    const config = { ...configSnap.data(), uid: configSnap.id } as EmailConfig
     if (!config.groqApiKey) throw new functionsV1.https.HttpsError('failed-precondition', 'Falta la clave API de Groq en la configuración')
 
     // Get active tasks for the project
@@ -362,7 +401,7 @@ export const emailSemanalAuto = functions.scheduler.onSchedule(
   async () => {
     const hoy = new Date()
     const snap = await db.collection('email_config').where('habilitado', '==', true).get()
-    const promises = snap.docs.map(d => procesarConfig(d.data() as EmailConfig, hoy))
+    const promises = snap.docs.map(d => procesarConfig({ ...d.data(), uid: d.id } as EmailConfig, hoy))
     await Promise.all(promises)
     functions.logger.log(`Email semanal procesado: ${snap.size} configuraciones activas`)
   }
@@ -377,7 +416,7 @@ export const previewEmailSemanal = functionsV1
     if (!context.auth) throw new functionsV1.https.HttpsError('unauthenticated', 'Requiere autenticación')
     const configSnap = await db.collection('email_config').doc(context.auth.uid).get()
     if (!configSnap.exists) throw new functionsV1.https.HttpsError('not-found', 'Sin configuración de email')
-    const config = configSnap.data() as EmailConfig
+    const config = { ...configSnap.data(), uid: configSnap.id } as EmailConfig
     const previews = await generarPreviews(config, new Date())
     return { previews }
   })
@@ -398,7 +437,7 @@ export const enviarEmailAhora = functionsV1
     if (!configSnap.exists) {
       throw new functionsV1.https.HttpsError('not-found', 'Sin configuración de email')
     }
-    const config = configSnap.data() as EmailConfig
+    const config = { ...configSnap.data(), uid: configSnap.id } as EmailConfig
     if (!config.gmailUser || !config.gmailAppPassword) {
       throw new functionsV1.https.HttpsError('failed-precondition', 'Faltan credenciales de email')
     }
@@ -418,4 +457,3 @@ export const enviarEmailAhora = functionsV1
     }
     return { ok: true, message: 'Emails enviados correctamente' }
   })
-

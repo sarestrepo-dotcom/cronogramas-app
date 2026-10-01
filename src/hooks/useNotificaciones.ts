@@ -1,5 +1,7 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useMisTareas } from './useMisTareas'
+import { useAuth } from './useAuth'
+import { suscribirNotificacionesApp, marcarNotificacionAppLeida, type NotificacionApp } from '@/lib/firestore'
 import { diasRestantes, isVencida } from '@/lib/utils'
 
 export type NivelNotif = 'vencida' | 'hoy' | 'manana' | 'semana'
@@ -28,7 +30,18 @@ function setLeidas(ids: Set<string>) {
 
 export function useNotificaciones() {
   const { tareas } = useMisTareas()
+  const { user } = useAuth()
   const [leidas, setLeidasState] = useState<Set<string>>(getLeidas)
+
+  // Solicitudes de cambio del portal (Firestore, persisten entre dispositivos)
+  const [todasSolicitudes, setSolicitudes] = useState<NotificacionApp[]>([])
+  useEffect(() => {
+    if (!user) return
+    return suscribirNotificacionesApp(user.uid, setSolicitudes)
+  }, [user?.uid])
+  const solicitudes = user ? todasSolicitudes : []
+  const solicitudesNoLeidas = useMemo(() => solicitudes.filter(s => !s.leida), [solicitudes])
+  const marcarSolicitudLeida = useCallback((id: string) => { marcarNotificacionAppLeida(id).catch(() => {}) }, [])
 
   const notificaciones: Notificacion[] = useMemo(() => {
     return tareas
@@ -73,7 +86,12 @@ export function useNotificaciones() {
     const ids = new Set(notificaciones.map(n => n.tareaId))
     setLeidasState(ids)
     setLeidas(ids)
-  }, [notificaciones])
+    solicitudesNoLeidas.forEach(s => marcarNotificacionAppLeida(s.id).catch(() => {}))
+  }, [notificaciones, solicitudesNoLeidas])
 
-  return { notificaciones, noLeidas, marcarLeida, marcarTodasLeidas }
+  return {
+    notificaciones, noLeidas, marcarLeida, marcarTodasLeidas,
+    solicitudes, solicitudesNoLeidas, marcarSolicitudLeida,
+    totalNoLeidas: noLeidas.length + solicitudesNoLeidas.length,
+  }
 }

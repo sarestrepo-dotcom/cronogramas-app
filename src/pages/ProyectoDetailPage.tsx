@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom'
 import { Timestamp, deleteField } from 'firebase/firestore'
 import {
@@ -14,7 +14,7 @@ import { useClientes } from '@/hooks/useClientes'
 import { useAuth } from '@/hooks/useAuth'
 import { useUndoStack } from '@/hooks/useUndoStack'
 import { useToast } from '@/components/ui/Toast'
-import { crearTarea, actualizarTarea, eliminarTarea, registrarCambio } from '@/lib/firestore'
+import { crearTarea, actualizarTarea, eliminarTarea, registrarCambio, listarPortalesPorProyecto, publicarPortales, type PortalResumen } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { calcularRutaCritica } from '@/lib/criticalPath'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer } from '@/lib/utils'
@@ -71,6 +71,7 @@ export function ProyectoDetailPage() {
   const [showHerramientas, setShowHerramientas] = useState(false)
   const [showEditProyecto, setShowEditProyecto] = useState(false)
   const [showPortal, setShowPortal] = useState(false)
+  const [portalTokenActividad, setPortalTokenActividad] = useState<string | undefined>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const toggleSelect = (id: string) =>
@@ -122,6 +123,37 @@ export function ProyectoDetailPage() {
       setSearchParams(p => { p.delete('tarea'); return p }, { replace: true })
     }
   }, [searchParams, enrichedTareas, setSearchParams])
+
+  // Portales de cliente: mantener sincronizada la copia pública (filtrada) del cronograma.
+  // El cliente no puede leer tareas; solo ve lo que se publica aquí.
+  const [portalesProyecto, setPortalesProyecto] = useState<PortalResumen[]>([])
+  const cargarPortales = useCallback(() => {
+    if (!proyectoId) return
+    listarPortalesPorProyecto(proyectoId).then(setPortalesProyecto).catch(() => {})
+  }, [proyectoId])
+  useEffect(() => { cargarPortales() }, [cargarPortales])
+  useEffect(() => {
+    if (!proyecto || loading || !portalesProyecto.some(p => p.activo)) return
+    const t = setTimeout(() => {
+      publicarPortales(proyecto, tareas, portalesProyecto)
+        .then(hash => {
+          if (hash && portalesProyecto.some(p => p.activo && p.publicoHash !== hash)) {
+            setPortalesProyecto(prev => prev.map(p => (p.activo ? { ...p, publicoHash: hash } : p)))
+          }
+        })
+        .catch(() => {})
+    }, 2000)
+    return () => clearTimeout(t)
+  }, [proyecto, tareas, loading, portalesProyecto])
+
+  // Deep-link: abrir la actividad de un portal desde la campana (?portal=TOKEN)
+  useEffect(() => {
+    const portalToken = searchParams.get('portal')
+    if (!portalToken) return
+    setPortalTokenActividad(portalToken)
+    setShowPortal(true)
+    setSearchParams(p => { p.delete('portal'); return p }, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const responsables = useMemo(() =>
     [...new Set(tareas.flatMap(t => t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])))].sort(),
@@ -398,7 +430,7 @@ export function ProyectoDetailPage() {
       {/* Content */}
       <div className={cn('flex-1 min-h-0', vista === 'tabla' && topTab === 'cronograma' ? 'overflow-hidden' : 'overflow-auto')}>
         {topTab === 'dashboard' ? (
-          <ProyectoDashboard tareas={enrichedTareas} />
+          <ProyectoDashboard tareas={enrichedTareas} onAbrirTarea={setSelectedTarea} />
         ) : loading ? (
           <div className="flex items-center justify-center h-64">
             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -553,11 +585,15 @@ export function ProyectoDetailPage() {
         />
       )}
 
-      {showPortal && proyectoId && (
+      {showPortal && proyectoId && proyecto && (
         <PortalModal
           proyectoId={proyectoId}
           empresaId={empresaId!}
-          onClose={() => setShowPortal(false)}
+          tokenActividad={portalTokenActividad}
+          proyecto={proyecto!}
+          tareas={tareas}
+          onPortalesCambiados={cargarPortales}
+          onClose={() => { setShowPortal(false); setPortalTokenActividad(undefined) }}
         />
       )}
     </div>

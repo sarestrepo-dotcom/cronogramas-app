@@ -118,8 +118,10 @@ npm run lint     # ESLint
 # Solo hosting (lo más común)
 source ~/.zshrc && firebase deploy --only hosting
 
-# Hosting + reglas Firestore (cuando se modifique firestore.rules)
+# Hosting + reglas Firestore (cuando se modifique firestore.rules) — antes: npm run test:rules
 source ~/.zshrc && firebase deploy --only hosting,firestore:rules
+
+# Cloud Functions: requiere plan Blaze (el proyecto está en Spark, ver quirk 10)
 ```
 
 ---
@@ -176,7 +178,7 @@ src/
 │   ├── kanban/KanbanView.tsx      # Kanban drag & drop por columnas de estado
 │   │
 │   ├── proyecto/
-│   │   ├── ProyectoDashboard.tsx  # Dashboard por proyecto (KPIs, hitos, carga)
+│   │   ├── ProyectoDashboard.tsx  # Dashboard por proyecto (KPIs, hitos, carga; clic en Bloqueadas → TareasBloqueadasModal)
 │   │   ├── PrintView.tsx          # Generador de PDF ejecutivo (window.open + html2canvas)
 │   │   ├── PortalModal.tsx        # Gestión de portales + actividad del cliente (PM)
 │   │   └── WorkloadView.tsx       # Vista de carga por responsable
@@ -230,7 +232,7 @@ Todas las vistas y tabs usan `useSearchParams` — cada estado es una URL única
 ## Modelo de datos Firestore
 
 Todas las colecciones son **raíz** (no sub-colecciones) para facilitar queries cross-empresa.
-La excepción son las sub-colecciones de `portales/` que son públicas.
+La excepción son las sub-colecciones de `portales/`.
 
 ### Colecciones
 
@@ -275,15 +277,23 @@ tareas/{id}
   - dependencias?: string[]        # IDs de tareas predecesoras
   - links?: string[]
 
-portales/{token}                   # Token UUID (sin guiones)
-  - proyectoId, nombre, activo: boolean
-  - creadoEn: Timestamp
-  /aprobaciones/{hitoId}           # Público (cliente sin cuenta)
-    - nombre, aprobadoEn: Timestamp
-  /comentarios/{id}                # Público
-    - texto, autor, creadoEn: Timestamp
-  /solicitudes/{id}                # Cliente crea; solo equipo lee
+portales/{token}                   # Token UUID (sin guiones). El cliente solo hace `get` si activo
+  - proyectoId, empresaId, nombre, activo: boolean, creadoEn
+  - duenos: string[]               # uids owner del proyecto (destinatarios de notificaciones)
+  - publico: { proyecto, tareas[], actualizadoEn }  # Copia FILTRADA que ve el cliente
+  - publicoHash                    # Evita reescribir si no cambió
+  - ultimaEscrituraPublica         # Sello anti-spam: 1 escritura del cliente cada 3 s
+  /aprobaciones/{hitoId}           # Cliente crea (solo hitos completados del proyecto)
+    - hitoId, nombre, aprobadoEn
+  /comentarios/{id}                # Cliente crea; público mientras el portal esté activo
+    - texto, autor, creadoEn
+  /solicitudes/{id}                # Cliente crea; solo el equipo lee
     - descripcion, autor, creadoEn, estado
+
+notificaciones/{id}                # In-app; las crea el portal junto con cada solicitud
+  - uid (destinatario), tipo: 'solicitud_cambio'
+  - proyectoId, empresaId, portalToken, titulo, mensaje
+  - leida: boolean, creadoEn
 
 lineas_base/{id}
   - proyectoId, nombre, creadoEn
@@ -332,14 +342,24 @@ El map `miembros` en cada empresa define el rol por usuario:
 - `viewer` → solo lectura
 
 ### Reglas Firestore (resumen)
-El archivo `firestore.rules` implementa:
-- **usuarios**: cualquier auth puede leer; solo el propio usuario o global admin escribe
-- **empresas**: solo miembros leen; owner/admin editan; owner borra
-- **proyectos**: miembros de la empresa o del proyecto leen; owner/admin de empresa escriben
-- **tareas**: cualquier auth lee; miembro de empresa o proyecto crea/actualiza; owner/admin de empresa borra
-- **portales y sub-colecciones**: lectura pública (`allow read: if true`); aprobaciones y comentarios también escritura pública
-- **comentarios, historial**: cualquier auth lee y crea; solo el autor borra sus comentarios
-- **email_config**: solo el propio usuario lee/escribe
+`firestore.rules` se prueba con `npm run test:rules` (emulador; requiere Java). **Correr las
+pruebas antes de cada deploy de reglas.** Principios:
+- **Tener sesión no basta.** Todo acceso exige `isUsuarioActivo()`: email en `usuarios_permitidos`,
+  `activo == true` y `email_verified == true` (evita que alguien se registre con email/password
+  usando el correo de un usuario permitido). El login también lo exige y envía el correo de verificación.
+- **usuarios_permitidos**: cada quien lee su propio doc; el equipo lista; solo admins globales
+  escriben (los demás solo pueden tocar `proyectosCompartidos` al compartir un proyecto).
+- **Aislamiento por empresa**: proyectos, tareas, clientes, plantillas, comentarios, historial y
+  líneas base solo los ve quien es miembro de la empresa o del proyecto compartido.
+- **Rules are not filters**: toda query debe acotarse por `proyectoId`, `empresaId` (de empresas
+  del usuario) o `tareaId`. Una query cross-empresa sin filtro es rechazada completa
+  (por eso "Mis Tareas" consulta por empresa/proyecto y filtra en memoria).
+- **portales**: el cliente solo hace `get` de un portal activo (no `list`: los tokens no se
+  pueden enumerar) y escribe aprobaciones/comentarios/solicitudes validados (campos, longitudes,
+  hora del servidor) dentro de un batch con sello anti-spam. Nunca lee proyectos ni tareas.
+- **email_config**: solo el dueño, y `uid` debe coincidir con el ID del documento.
+- **notificaciones**: cada quien lee las suyas y solo puede cambiar `leida`. Solo se crean en el
+  mismo batch que una solicitud de cambio nueva y para uids en `portales/{token}.duenos`.
 
 ---
 
@@ -372,11 +392,21 @@ Aplica en: `ProyectoDetailPage`, `MisTareasPage`, `TareasTabla`.
 Si un usuario no ve sus tareas, hay que agregar el nombre usado en las tareas como alias en **Admin → Aliases**.
 
 ### Portal del cliente
-URL pública `/portal/:token` sin autenticación. El token es un UUID almacenado en `portales/{token}`. El cliente puede:
-- Ver KPIs, cronograma e hitos del proyecto
-- Aprobar hitos (escribe en `portales/{token}/aprobaciones/`)
-- Dejar comentarios (escribe en `portales/{token}/comentarios/`)
-- Solicitar cambios (escribe en `portales/{token}/solicitudes/`) — solo el equipo autenticado puede leer estas solicitudes
+URL pública `/portal/:token` sin autenticación. **Todo funciona en el plan gratuito (Spark), sin
+Cloud Functions.** El token es un UUID (128 bits) en `portales/{token}`.
+
+- **Datos que ve el cliente:** `ProyectoDetailPage` publica en `portales/{token}.publico` una copia
+  filtrada (`construirDatosPortal` en `firestore.ts`): sin valor de venta, responsables,
+  descripciones ni notas internas; las `notas` solo van en tareas bloqueadas (motivo de bloqueo).
+  Se republica ~2 s después de cada cambio mientras alguien del equipo tiene el proyecto abierto
+  (cambios hechos desde otras páginas se publican la próxima vez que se abra el proyecto).
+  **Si agregas un dato al portal, agrégalo en `construirDatosPortal` — nunca abras reglas de tareas.**
+- **El cliente** lo ve en tiempo real (onSnapshot): KPIs, tareas bloqueadas con su motivo, hitos y
+  cronograma completo (Lista o Gantt solo lectura). Puede aprobar hitos completados, comentar y
+  solicitar cambios.
+- **Solicitudes de cambio:** crean una notificación en la campana para los dueños del proyecto
+  (`duenos`), en el mismo batch. El enlace abre `?portal=TOKEN` → pestaña Actividad. No hay email
+  (requeriría Cloud Functions / plan Blaze).
 
 ### Búsqueda global (Cmd+K)
 `SearchModal` carga todas las tareas y proyectos del usuario al abrirse. Las queries de Firestore con `in` están divididas en chunks de 10 (límite de Firestore). Navega a `/empresa/:id/proyecto/:id?tarea=:id` para abrir el panel de tarea directamente.
@@ -480,10 +510,13 @@ El header del proyecto (`ProyectoDetailPage`) usa `z-40` para quedar por encima 
 
 5. **Progreso de grupos NO se guarda en Firestore:** Es siempre derivado de los hijos en tiempo de render. Lo que está en BD es el progreso de las tareas hoja.
 
-6. **Portal público sin auth:** La ruta `/portal/:token` está FUERA del `ProtectedRoute`. `PortalClientePage` no usa `useAuth`. Las Firestore Rules permiten `allow read: if true` en el documento del portal y sus sub-colecciones de aprobaciones/comentarios.
+6. **Portal público sin auth:** La ruta `/portal/:token` está FUERA del `ProtectedRoute`. `PortalClientePage` no usa `useAuth`; solo lee `portales/{token}` y sus subcolecciones públicas.
+
 
 7. **Gantt z-index:** El Gantt usa hasta `z-30`. El header sticky del proyecto usa `z-40`. El dropdown "Herramientas" del topbar usa `z-50`. Respetar esta jerarquía al agregar elementos flotantes.
 
 8. **API key de Groq por usuario:** No va en variables de entorno. Cada usuario la configura en Ajustes y se guarda en `email_config/{uid}.groqApiKey` en Firestore.
 
 9. **Gmail App Password:** El envío de emails usa SMTP directo con la cuenta Gmail del usuario y un App Password de Google (no la contraseña normal). El usuario debe tener la verificación en 2 pasos activa y generar un App Password en su cuenta Google.
+
+10. **Plan Spark (gratuito):** el proyecto NO puede desplegar Cloud Functions. El código de `functions/` (email semanal, procesamiento de emails con IA) no está desplegado, así que esas funciones de la app no operan en producción. Nada nuevo debe depender de Cloud Functions salvo que se pase a Blaze.

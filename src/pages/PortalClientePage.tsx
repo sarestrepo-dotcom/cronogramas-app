@@ -3,24 +3,33 @@ import { useParams } from 'react-router-dom'
 import {
   CalendarRange, CheckCircle2, Clock, AlertTriangle, Circle,
   Calendar, ThumbsUp, MessageSquare, Send, Plus, ChevronDown, ChevronUp,
+  Ban, StickyNote, List, GanttChartSquare,
 } from 'lucide-react'
 import {
-  getPortal, getProyectoPublico, getTareasPublicas,
-  aprobarHito, getAprobaciones,
-  agregarComentarioPortal, getComentariosPortal,
-  crearSolicitudCambio,
-  type Aprobacion, type ComentarioPortal,
+  suscribirPortalPublico, suscribirAprobacionesPortal, suscribirComentariosPortal,
+  aprobarHitoPortal, comentarPortal, solicitarCambioPortal,
+  type Aprobacion, type ComentarioPortal, type PortalPublico,
 } from '@/lib/firestore'
 import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
+import { GanttVisual } from '@/components/gantt/GanttVisual'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, isVencida } from '@/lib/utils'
-import type { Tarea, Proyecto } from '@/types'
+import type { Tarea } from '@/types'
+
+// Las reglas rechazan escrituras demasiado seguidas (anti-spam) o con datos inválidos
+function mensajeError(e: unknown): string {
+  if ((e as { code?: string }).code === 'permission-denied') {
+    return 'No se pudo enviar. Espera unos segundos e intenta de nuevo (máx. 2.000 caracteres).'
+  }
+  return 'No se pudo enviar. Revisa tu conexión e intenta de nuevo.'
+}
 
 export function PortalClientePage() {
   const { token } = useParams<{ token: string }>()
-  const [estado, setEstado] = useState<'cargando' | 'invalido' | 'ok'>('cargando')
-  const [proyecto, setProyecto] = useState<Proyecto | null>(null)
-  const [tareas, setTareas] = useState<Tarea[]>([])
-  const [nombrePortal, setNombrePortal] = useState('')
+  const [estado, setEstado] = useState<'cargando' | 'invalido' | 'ok'>(token ? 'cargando' : 'invalido')
+  const [portal, setPortal] = useState<PortalPublico | null>(null)
+  const proyecto = portal?.datos?.proyecto ?? null
+  const tareas = useMemo(() => portal?.datos?.tareas ?? [], [portal])
+  const nombrePortal = portal?.nombrePortal ?? ''
 
   // Interacción
   const [aprobaciones, setAprobaciones] = useState<Record<string, Aprobacion>>({})
@@ -37,30 +46,28 @@ export function PortalClientePage() {
   const [descripcionSolicitud, setDescripcionSolicitud] = useState('')
   const [enviandoSolicitud, setEnviandoSolicitud] = useState(false)
   const [solicitudEnviada, setSolicitudEnviada] = useState(false)
+  const [errorAccion, setErrorAccion] = useState<string | null>(null)
+  const [vistaCrono, setVistaCrono] = useState<'lista' | 'gantt'>('lista')
 
+  // Todo en tiempo real: el cliente ve los cambios del equipo apenas se publican
   useEffect(() => {
-    if (!token) { setEstado('invalido'); return }
-    getPortal(token).then(async portal => {
-      if (!portal || !portal.activo) { setEstado('invalido'); return }
-      setNombrePortal(portal.nombre)
-      const [p, ts, aprs, comts] = await Promise.all([
-        getProyectoPublico(portal.proyectoId),
-        getTareasPublicas(portal.proyectoId),
-        getAprobaciones(token!),
-        getComentariosPortal(token!),
-      ])
-      setProyecto(p)
-      setTareas(ts)
-      setAprobaciones(aprs)
-      setComentarios(comts)
-      setEstado('ok')
-    })
+    if (!token) return
+    const unsubs = [
+      suscribirPortalPublico(token, p => { setPortal(p); setEstado(p ? 'ok' : 'invalido') }),
+      suscribirAprobacionesPortal(token, setAprobaciones),
+      suscribirComentariosPortal(token, setComentarios),
+    ]
+    return () => unsubs.forEach(u => u())
   }, [token])
 
   const enriched = useMemo(() => enrichTareas(tareas), [tareas])
   const numeros  = useMemo(() => computeNumeros(enriched), [enriched])
   const rows     = useMemo(() => buildHierarchy(enriched), [enriched])
   const hitos    = useMemo(() => enriched.filter(t => t.tipo === 'hito').sort((a, b) => (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0)), [enriched])
+  const bloqueadas = useMemo(() => enriched
+    .filter(t => t.tipo !== 'grupo' && t.estado === 'bloqueada')
+    .sort((a, b) => (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0)), [enriched])
+  const grupoDe = (t: Tarea) => enriched.find(g => g.id === t.parentId && g.tipo === 'grupo')?.titulo ?? t.fase
 
   const activas     = enriched.filter(t => t.tipo !== 'grupo')
   const completadas = activas.filter(t => t.estado === 'completada').length
@@ -91,30 +98,44 @@ export function PortalClientePage() {
   const doAprobar = async (hitoId: string, nombre: string) => {
     if (!token) return
     setAprobando(hitoId)
-    await aprobarHito(token, hitoId, nombre)
-    const aprs = await getAprobaciones(token)
-    setAprobaciones(aprs)
-    setAprobando(null)
+    setErrorAccion(null)
+    try {
+      await aprobarHitoPortal(token, hitoId, nombre)
+    } catch (e) {
+      setErrorAccion(mensajeError(e))
+    } finally {
+      setAprobando(null)
+    }
   }
 
   const doComentario = async () => {
     if (!token || !nuevoComentario.trim() || !nombreCliente.trim()) return
     setEnviandoComentario(true)
-    await agregarComentarioPortal(token, nuevoComentario.trim(), nombreCliente.trim())
-    const comts = await getComentariosPortal(token)
-    setComentarios(comts)
-    setNuevoComentario('')
-    setEnviandoComentario(false)
+    setErrorAccion(null)
+    try {
+      await comentarPortal(token, nuevoComentario.trim(), nombreCliente.trim())
+      setNuevoComentario('')
+    } catch (e) {
+      setErrorAccion(mensajeError(e))
+    } finally {
+      setEnviandoComentario(false)
+    }
   }
 
   const doSolicitud = async () => {
-    if (!token || !descripcionSolicitud.trim() || !nombreCliente.trim()) return
+    if (!token || !portal || !descripcionSolicitud.trim() || !nombreCliente.trim()) return
     setEnviandoSolicitud(true)
-    await crearSolicitudCambio(token, descripcionSolicitud.trim(), nombreCliente.trim())
-    setDescripcionSolicitud('')
-    setEnviandoSolicitud(false)
-    setSolicitudEnviada(true)
-    setTimeout(() => { setSolicitudEnviada(false); setShowSolicitud(false) }, 3000)
+    setErrorAccion(null)
+    try {
+      await solicitarCambioPortal(token, portal, descripcionSolicitud.trim(), nombreCliente.trim())
+      setDescripcionSolicitud('')
+      setSolicitudEnviada(true)
+      setTimeout(() => { setSolicitudEnviada(false); setShowSolicitud(false) }, 3000)
+    } catch (e) {
+      setErrorAccion(mensajeError(e))
+    } finally {
+      setEnviandoSolicitud(false)
+    }
   }
 
   if (estado === 'cargando') {
@@ -174,6 +195,12 @@ export function PortalClientePage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        {!portal?.datos && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-xl px-4 py-3">
+            El equipo está preparando el cronograma de este portal. Vuelve a intentarlo en unos minutos.
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
@@ -209,11 +236,53 @@ export function PortalClientePage() {
           </div>
           {proyecto && (
             <div className="flex justify-between mt-2 text-xs text-slate-400">
-              <span>{formatFecha(proyecto.fechaInicio)}</span>
-              <span>{formatFecha(proyecto.fechaFin)}</span>
+              <span>{formatFecha(proyecto.fechaInicio ?? undefined)}</span>
+              <span>{formatFecha(proyecto.fechaFin ?? undefined)}</span>
             </div>
           )}
         </div>
+
+        {errorAccion && !showSolicitud && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
+            <AlertTriangle size={15} /> {errorAccion}
+          </div>
+        )}
+
+        {/* Tareas bloqueadas */}
+        {bloqueadas.length > 0 && (
+          <div className="bg-white rounded-2xl border border-red-200 p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <Ban size={15} className="text-red-500" />
+              <h2 className="text-sm font-semibold text-slate-700">Tareas bloqueadas</h2>
+              <span className="text-[10px] font-bold bg-red-100 text-red-700 rounded-full px-1.5 py-0.5 leading-none">{bloqueadas.length}</span>
+            </div>
+            <div className="space-y-3">
+              {bloqueadas.map(t => {
+                const grupo = grupoDe(t)
+                const venc = isVencida(t.fechaFin)
+                return (
+                  <div key={t.id} className="rounded-xl border border-red-100 bg-red-50/40 px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        {grupo && <p className="text-[11px] text-slate-400 font-medium truncate">▶ {grupo}</p>}
+                        <p className="text-sm font-medium text-slate-800">{t.tipo === 'hito' ? '◆ ' : ''}{t.titulo}</p>
+                      </div>
+                      <span className={cn('text-xs flex-shrink-0', venc ? 'text-red-500 font-semibold' : 'text-slate-400')}>
+                        {formatFecha(t.fechaFin)}
+                      </span>
+                    </div>
+                    {t.notas?.trim() && (
+                      <div className="mt-2 flex gap-2 text-sm text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                        <StickyNote size={14} className="flex-shrink-0 mt-0.5 text-slate-400" />
+                        <p className="whitespace-pre-wrap leading-relaxed">{t.notas.trim()}</p>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Hitos con aprobación */}
         {hitos.length > 0 && (
@@ -332,9 +401,23 @@ export function PortalClientePage() {
 
         {/* Cronograma */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold text-slate-700">Cronograma</h2>
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
+              {([['lista', 'Lista', <List size={13} key="l" />], ['gantt', 'Gantt', <GanttChartSquare size={13} key="g" />]] as const).map(([v, label, icon]) => (
+                <button key={v} onClick={() => setVistaCrono(v)}
+                  className={cn('flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                    vistaCrono === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                  {icon} {label}
+                </button>
+              ))}
+            </div>
           </div>
+          {vistaCrono === 'gantt' ? (
+            <div className="h-[640px]">
+              <GanttVisual tareas={enriched} />
+            </div>
+          ) : (
           <div className="divide-y divide-slate-100">
             {rows.map((row, i) => {
               if (row.kind === 'fase_header') {
@@ -383,6 +466,7 @@ export function PortalClientePage() {
               </div>
             )}
           </div>
+          )}
         </div>
 
         <p className="text-center text-xs text-slate-300 pb-4">
@@ -453,6 +537,7 @@ export function PortalClientePage() {
                   value={descripcionSolicitud}
                   onChange={e => setDescripcionSolicitud(e.target.value)}
                 />
+                {errorAccion && <p className="text-xs text-rose-600">{errorAccion}</p>}
                 <div className="flex gap-2">
                   <button onClick={() => setShowSolicitud(false)} className="flex-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50">
                     Cancelar

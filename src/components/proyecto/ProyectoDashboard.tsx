@@ -6,6 +6,7 @@ import { Mail, Copy, Check, X, Download } from 'lucide-react'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate } from '@/lib/utils'
 import { generarEmailsResumen } from '@/lib/emailUtils'
 import { exportCSV } from '@/lib/exportUtils'
+import { TareasBloqueadasModal } from './TareasBloqueadasModal'
 import type { Tarea } from '@/types'
 
 type DashTab = 'resumen' | 'semanal'
@@ -15,9 +16,10 @@ const PRIORIDAD_LABELS = { baja: 'Baja', media: 'Media', alta: 'Alta', critica: 
 interface Props {
   tareas: Tarea[]
   proyectoNombre?: string
+  onAbrirTarea?: (t: Tarea) => void
 }
 
-export function ProyectoDashboard({ tareas, proyectoNombre }: Props) {
+export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Props) {
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = (searchParams.get('dash') as DashTab | null) ?? 'resumen'
   const setTab = (t: DashTab) =>
@@ -91,7 +93,7 @@ export function ProyectoDashboard({ tareas, proyectoNombre }: Props) {
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {tab === 'resumen'
-          ? <ResumenEjecutivo tareas={filtered} allTareas={tareas} proyectoNombre={proyectoNombre} />
+          ? <ResumenEjecutivo tareas={filtered} allTareas={tareas} proyectoNombre={proyectoNombre} onAbrirTarea={onAbrirTarea} />
           : <VistaSemanal tareas={filtered} allTareas={tareas} />
         }
       </div>
@@ -105,13 +107,17 @@ export function ProyectoDashboard({ tareas, proyectoNombre }: Props) {
 
 // ─── Resumen ejecutivo ────────────────────────────────────────────────────────
 
-function ResumenEjecutivo({ tareas, allTareas, proyectoNombre }: { tareas: Tarea[]; allTareas: Tarea[]; proyectoNombre?: string }) {
+function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
+  tareas: Tarea[]; allTareas: Tarea[]; proyectoNombre?: string; onAbrirTarea?: (t: Tarea) => void
+}) {
+  const [showBloqueadas, setShowBloqueadas] = useState(false)
   const nonGrupo = tareas.filter(t => t.tipo !== 'grupo')
   const total = nonGrupo.length
   const completadas = nonGrupo.filter(t => t.estado === 'completada').length
   const enProceso   = nonGrupo.filter(t => t.estado === 'en_progreso').length
   const pendientes  = nonGrupo.filter(t => t.estado === 'pendiente').length
-  const bloqueadas  = nonGrupo.filter(t => t.estado === 'bloqueada').length
+  const listaBloqueadas = nonGrupo.filter(t => t.estado === 'bloqueada')
+  const bloqueadas  = listaBloqueadas.length
   const globalPct   = total > 0 ? Math.round(nonGrupo.reduce((s, t) => s + (t.progreso ?? 0), 0) / total) : 0
 
   const grupos = allTareas.filter(t => t.tipo === 'grupo')
@@ -128,7 +134,8 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre }: { tareas: Tarea
           <StatCard label="Completadas"   value={completadas}  valueClass="text-emerald-600" />
           <StatCard label="En curso"      value={enProceso}    valueClass="text-blue-600" />
           <StatCard label="Pendientes"    value={pendientes}   valueClass="text-slate-500" />
-          <StatCard label="Bloqueadas"    value={bloqueadas}   valueClass="text-red-600" />
+          <StatCard label="Bloqueadas"    value={bloqueadas}   valueClass="text-red-600"
+            onClick={() => setShowBloqueadas(true)} hint="Ver motivos" />
           <StatCard label="Avance global" value={`${globalPct}%`} valueClass="text-indigo-600" />
         </div>
       </div>
@@ -246,16 +253,37 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre }: { tareas: Tarea
           </table>
         </div>
       </div>
+
+      {showBloqueadas && (
+        <TareasBloqueadasModal
+          bloqueadas={listaBloqueadas}
+          allTareas={allTareas}
+          onClose={() => setShowBloqueadas(false)}
+          onAbrirTarea={onAbrirTarea && (t => { setShowBloqueadas(false); onAbrirTarea(t) })}
+        />
+      )}
     </div>
   )
 }
 
-function StatCard({ label, value, valueClass }: { label: string; value: string | number; valueClass: string }) {
-  return (
-    <div className="bg-white rounded-xl border border-slate-200 px-4 py-4 text-center">
+function StatCard({ label, value, valueClass, onClick, hint }: {
+  label: string; value: string | number; valueClass: string; onClick?: () => void; hint?: string
+}) {
+  const content = (
+    <>
       <p className={cn('text-2xl font-bold', valueClass)}>{value}</p>
       <p className="text-xs text-slate-500 mt-1 leading-tight">{label}</p>
-    </div>
+      {onClick && hint && <p className="text-[10px] text-indigo-500 mt-1 font-medium">{hint} →</p>}
+    </>
+  )
+  if (!onClick) {
+    return <div className="bg-white rounded-xl border border-slate-200 px-4 py-4 text-center">{content}</div>
+  }
+  return (
+    <button onClick={onClick}
+      className="bg-white rounded-xl border border-slate-200 px-4 py-4 text-center hover:border-indigo-300 hover:shadow-sm transition-all cursor-pointer">
+      {content}
+    </button>
   )
 }
 

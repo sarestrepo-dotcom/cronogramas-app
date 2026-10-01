@@ -2,180 +2,286 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ─── Identidad ──────────────────────────────────────────────────────────
+    // Tener sesión de Firebase Auth NO basta: cualquiera puede crear una cuenta de
+    // Google o email/password contra este proyecto. Todo acceso a datos exige estar
+    // en la lista blanca (usuarios_permitidos), activo y con email verificado (si no,
+    // alguien podría registrarse con email/password usando el correo de otro).
+
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // True if the user's usuarios_permitidos entry lists this empresa (granted access,
-    // independent of whether empresa.miembros has been synced for this uid yet)
-    function tienePermisoEmpresa(empresaId) {
+    function permisoPath() {
+      return /databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email);
+    }
+
+    function isUsuarioActivo() {
       return isSignedIn() &&
         request.auth.token.email != null &&
-        exists(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)) &&
-        empresaId in get(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)).data.empresas;
+        request.auth.token.email_verified == true &&
+        exists(permisoPath()) &&
+        get(permisoPath()).data.activo == true;
     }
 
-    // Checks membership in an empresa document that is NOT the document being evaluated.
-    // Falls back to tienePermisoEmpresa so read access doesn't depend on empresa.miembros
-    // being synced yet (that sync requires the user's usuarios/{uid} doc to already exist,
-    // which only happens after their first login — see AdminPage GestionarEmpresasModal).
-    function isMiembroEmpresaExterna(empresaId) {
-      return isSignedIn() && (
-        (exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
-         request.auth.uid in get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros) ||
-        tienePermisoEmpresa(empresaId)
-      );
+    function isGlobalAdmin() {
+      return isUsuarioActivo() && get(permisoPath()).data.rol == 'admin';
     }
 
-    // Checks owner/admin role in an external empresa document
-    function puedeEditarEmpresaExterna(empresaId) {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
+    // ─── Empresas y proyectos ───────────────────────────────────────────────
+
+    // Acceso a una empresa: miembro en empresa.miembros, o la empresa está asignada
+    // en su usuarios_permitidos.empresas (no depende de que miembros esté sincronizado)
+    function isMiembroEmpresa(empresaId) {
+      return (exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
+              request.auth.uid in get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros) ||
+             empresaId in get(permisoPath()).data.empresas;
+    }
+
+    function puedeEditarEmpresa(empresaId) {
+      return exists(/databases/$(database)/documents/empresas/$(empresaId)) &&
         get(/databases/$(database)/documents/empresas/$(empresaId)).data.miembros[request.auth.uid] in ['owner', 'admin'];
     }
 
-    function isMiembroProyecto(proyectoId) {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/proyectos/$(proyectoId)) &&
-        request.auth.uid in get(/databases/$(database)/documents/proyectos/$(proyectoId)).data.miembros;
+    function proyectoPath(proyectoId) {
+      return /databases/$(database)/documents/proyectos/$(proyectoId);
     }
 
-    // Usuarios — el propio usuario puede escribir su doc; los admins globales también
-    function isGlobalAdmin() {
-      return isSignedIn() &&
-        request.auth.token.email != null &&
-        exists(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)) &&
-        get(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)).data.rol == 'admin';
+    // Equipo del proyecto: miembro directo (proyecto compartido) o miembro de su empresa
+    function puedeVerProyecto(proyectoId) {
+      return exists(proyectoPath(proyectoId)) && (
+        request.auth.uid in get(proyectoPath(proyectoId)).data.miembros ||
+        isMiembroEmpresa(get(proyectoPath(proyectoId)).data.empresaId)
+      );
     }
+
+    function puedeVerTarea(tareaId) {
+      let tarea = /databases/$(database)/documents/tareas/$(tareaId);
+      return exists(tarea) && puedeVerProyecto(get(tarea).data.proyectoId);
+    }
+
+    // ─── Usuarios ───────────────────────────────────────────────────────────
+
+    // Lista blanca. Cada quien lee su propio permiso (lo necesita el login antes de
+    // estar validado); el resto del equipo puede listarla para compartir proyectos.
+    // Solo admins globales la modifican, salvo proyectosCompartidos (compartir proyecto).
+    match /usuarios_permitidos/{email} {
+      allow get: if isSignedIn() && request.auth.token.email == email;
+      allow read: if isUsuarioActivo();
+      allow create, delete: if isGlobalAdmin();
+      allow update: if isGlobalAdmin() || (
+        isUsuarioActivo() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['proyectosCompartidos'])
+      );
+    }
+
     match /usuarios/{uid} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && (request.auth.uid == uid || isGlobalAdmin());
+      allow read: if isUsuarioActivo();
+      allow write: if isUsuarioActivo() && (request.auth.uid == uid || isGlobalAdmin());
     }
 
-    // Empresas — allow read if uid is in miembros OR if the empresa is listed in the user's usuarios_permitidos entry
+    // Configuración de email (contiene App Password de Gmail y API key) — solo el dueño
+    match /email_config/{uid} {
+      allow read: if isUsuarioActivo() && request.auth.uid == uid;
+      allow write: if isUsuarioActivo() && request.auth.uid == uid &&
+        request.resource.data.uid == uid;
+    }
+
+    // Notificaciones in-app; cada quien ve las suyas. Las crea el portal del cliente al
+    // enviar una solicitud de cambio: solo para dueños del proyecto y en el mismo batch
+    // que crea esa solicitud (no se pueden fabricar notificaciones sueltas).
+    function notificacionDeSolicitudValida() {
+      let n = request.resource.data;
+      return n.keys().hasOnly(['uid', 'tipo', 'proyectoId', 'empresaId', 'portalToken',
+                               'solicitudId', 'titulo', 'mensaje', 'leida', 'creadoEn']) &&
+        n.tipo == 'solicitud_cambio' &&
+        n.portalToken is string && portalActivo(n.portalToken) &&
+        n.uid in get(portalPath(n.portalToken)).data.duenos &&
+        n.proyectoId == get(portalPath(n.portalToken)).data.proyectoId &&
+        n.solicitudId is string &&
+        !exists(/databases/$(database)/documents/portales/$(n.portalToken)/solicitudes/$(n.solicitudId)) &&
+        existsAfter(/databases/$(database)/documents/portales/$(n.portalToken)/solicitudes/$(n.solicitudId)) &&
+        escrituraPublicaSellada(n.portalToken) &&
+        textoValido(n.titulo, 200) && textoValido(n.mensaje, 300) &&
+        n.leida == false && n.creadoEn == request.time;
+    }
+    match /notificaciones/{nId} {
+      allow read: if isUsuarioActivo() && resource.data.uid == request.auth.uid;
+      allow create: if notificacionDeSolicitudValida();
+      allow update: if isUsuarioActivo() && resource.data.uid == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leida']);
+      allow delete: if isUsuarioActivo() && resource.data.uid == request.auth.uid;
+    }
+
+    // ─── Empresas ───────────────────────────────────────────────────────────
+
     match /empresas/{empresaId} {
-      allow read: if isSignedIn() && (
+      allow read: if isUsuarioActivo() && (
         request.auth.uid in resource.data.miembros ||
-        (request.auth.token.email != null &&
-         exists(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)) &&
-         empresaId in get(/databases/$(database)/documents/usuarios_permitidos/$(request.auth.token.email)).data.empresas)
+        empresaId in get(permisoPath()).data.empresas
       );
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && resource.data.miembros[request.auth.uid] in ['owner', 'admin'];
-      allow delete: if isSignedIn() && resource.data.miembros[request.auth.uid] == 'owner';
+      allow create: if isUsuarioActivo() &&
+        request.resource.data.miembros[request.auth.uid] == 'owner';
+      allow update: if isUsuarioActivo() && resource.data.miembros[request.auth.uid] in ['owner', 'admin'];
+      allow delete: if isUsuarioActivo() && resource.data.miembros[request.auth.uid] == 'owner';
     }
 
-    // Proyectos
-    // Read queries used by the app:
-    //   where('empresaId', '==', X)     → empresaId constrained → isMiembroEmpresaExterna evaluable
-    //   where('empresaId', 'in', Xs)    → same
-    //   where(documentId(), 'in', ids)  → uid in resource.data.miembros handles this (shared projects)
-    // uid-in-miembros checked first so documentId() queries short-circuit without needing get()
-    // isMiembroEmpresaExterna also falls back to usuarios_permitidos.empresas so access doesn't
-    // depend on empresa.miembros being synced (see tienePermisoEmpresa above)
-    match /proyectos/{proyectoId} {
-      allow read: if isSignedIn() && (
-        request.auth.uid in resource.data.miembros ||
-        isMiembroEmpresaExterna(resource.data.empresaId)
-      );
-      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
-      allow update: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
-      allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+    match /clientes/{cId} {
+      allow read: if isUsuarioActivo() && isMiembroEmpresa(resource.data.empresaId);
+      allow create: if isUsuarioActivo() && puedeEditarEmpresa(request.resource.data.empresaId);
+      allow update: if isUsuarioActivo() && puedeEditarEmpresa(resource.data.empresaId) &&
+        request.resource.data.empresaId == resource.data.empresaId;
+      allow delete: if isUsuarioActivo() && puedeEditarEmpresa(resource.data.empresaId);
     }
 
-    // Tareas
-    // Read: open to any authenticated user (queries always scoped by empresaId or proyectoId in the app)
-    // Write: empresa members OR explicit project members (covers shared-project users like Vero/Will)
-    match /tareas/{tareaId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && (
-        isMiembroEmpresaExterna(request.resource.data.empresaId) ||
-        isMiembroProyecto(request.resource.data.proyectoId)
-      );
-      allow update: if isSignedIn() && (
-        isMiembroEmpresaExterna(resource.data.empresaId) ||
-        isMiembroProyecto(resource.data.proyectoId)
-      );
-      allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
-    }
-
-    // Invitaciones
     match /invitaciones/{invId} {
-      allow read: if isSignedIn() && (
+      allow read: if isUsuarioActivo() && (
         resource.data.emailDestino == request.auth.token.email ||
         resource.data.creadoPor == request.auth.uid
       );
-      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
-      allow update: if isSignedIn() && resource.data.emailDestino == request.auth.token.email;
+      allow create: if isUsuarioActivo() && puedeEditarEmpresa(request.resource.data.empresaId);
+      allow update: if isUsuarioActivo() && resource.data.emailDestino == request.auth.token.email;
     }
 
-    // Lista blanca de acceso — cualquier usuario autenticado puede leer
-    match /usuarios_permitidos/{email} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+    // ─── Proyectos ──────────────────────────────────────────────────────────
+    // Queries de la app: where('empresaId', '==' | 'in', …) y where(documentId(), 'in', ids)
+    match /proyectos/{proyectoId} {
+      allow read: if isUsuarioActivo() && (
+        request.auth.uid in resource.data.miembros ||
+        isMiembroEmpresa(resource.data.empresaId)
+      );
+      allow create: if isUsuarioActivo() && puedeEditarEmpresa(request.resource.data.empresaId);
+      allow update: if isUsuarioActivo() && puedeEditarEmpresa(resource.data.empresaId) &&
+        request.resource.data.empresaId == resource.data.empresaId;
+      allow delete: if isUsuarioActivo() && puedeEditarEmpresa(resource.data.empresaId);
     }
 
-    // Configuración de email — solo el propio usuario
-    match /email_config/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    // ─── Tareas ─────────────────────────────────────────────────────────────
+    // Queries de la app: where('proyectoId', '==' | 'in', …) y where('empresaId', 'in', …)
+    match /tareas/{tareaId} {
+      allow read: if isUsuarioActivo() && (
+        isMiembroEmpresa(resource.data.empresaId) ||
+        puedeVerProyecto(resource.data.proyectoId)
+      );
+      // La tarea debe pertenecer a la misma empresa que su proyecto
+      allow create: if isUsuarioActivo() &&
+        puedeVerProyecto(request.resource.data.proyectoId) &&
+        request.resource.data.empresaId == get(proyectoPath(request.resource.data.proyectoId)).data.empresaId;
+      allow update: if isUsuarioActivo() &&
+        puedeVerProyecto(resource.data.proyectoId) &&
+        request.resource.data.proyectoId == resource.data.proyectoId &&
+        request.resource.data.empresaId == resource.data.empresaId;
+      allow delete: if isUsuarioActivo() && puedeEditarEmpresa(resource.data.empresaId);
     }
 
-    // Líneas base
-    match /lineas_base/{lbId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isMiembroProyecto(request.resource.data.proyectoId);
-      allow update, delete: if isSignedIn() && isMiembroProyecto(resource.data.proyectoId);
-    }
-
-    // Comentarios de tareas
+    // Comentarios de tareas — query: where('tareaId', '==', …)
     match /comentarios/{cId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow delete: if isSignedIn() && resource.data.autorId == request.auth.uid;
+      allow read: if isUsuarioActivo() && puedeVerTarea(resource.data.tareaId);
+      allow create: if isUsuarioActivo() &&
+        request.resource.data.autorId == request.auth.uid &&
+        puedeVerTarea(request.resource.data.tareaId);
+      allow delete: if isUsuarioActivo() && resource.data.autorId == request.auth.uid;
     }
 
-    // Historial de cambios
+    // Historial de cambios — query: where('tareaId', '==', …). Inmutable.
     match /historial_cambios/{hId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow read: if isUsuarioActivo() && puedeVerTarea(resource.data.tareaId);
+      allow create: if isUsuarioActivo() && puedeVerTarea(request.resource.data.tareaId);
     }
 
-    // Clientes
-    match /clientes/{cId} {
-      allow read: if isSignedIn() && isMiembroEmpresaExterna(resource.data.empresaId);
-      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
-      allow update, delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+    // Líneas base — query: where('proyectoId', '==', …)
+    match /lineas_base/{lbId} {
+      allow read: if isUsuarioActivo() && puedeVerProyecto(resource.data.proyectoId);
+      allow create: if isUsuarioActivo() && puedeVerProyecto(request.resource.data.proyectoId);
+      allow update, delete: if isUsuarioActivo() && puedeVerProyecto(resource.data.proyectoId);
     }
 
-    // Plantillas de proyectos
+    // Plantillas — query: where('empresaId', '==', …)
     match /plantillas/{pId} {
-      allow read: if isSignedIn() && resource.data.empresaId in get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.empresas;
-      allow create: if isSignedIn() && puedeEditarEmpresaExterna(request.resource.data.empresaId);
-      allow delete: if isSignedIn() && puedeEditarEmpresaExterna(resource.data.empresaId);
+      allow read: if isUsuarioActivo() && isMiembroEmpresa(resource.data.empresaId);
+      allow create: if isUsuarioActivo() && puedeEditarEmpresa(request.resource.data.empresaId);
+      allow delete: if isUsuarioActivo() && puedeEditarEmpresa(resource.data.empresaId);
     }
 
-    // Portales cliente — token público de solo lectura
+    // ─── Portales de cliente ────────────────────────────────────────────────
+    // El cliente (sin cuenta) NO lee proyectos ni tareas. El equipo publica en
+    // portales/{token}.publico una copia filtrada; el cliente solo puede hacer `get` de
+    // su portal (no `list`: los tokens no se pueden enumerar) mientras esté activo.
+    // Sus escrituras (aprobar, comentar, solicitar) van en un batch que sella
+    // ultimaEscrituraPublica = request.time, con mínimo 3 s entre escrituras (anti-spam).
+
+    function portalPath(token) {
+      return /databases/$(database)/documents/portales/$(token);
+    }
+
+    function portalActivo(token) {
+      return exists(portalPath(token)) && get(portalPath(token)).data.activo == true;
+    }
+
+    function equipoDelPortal(token) {
+      return isUsuarioActivo() && puedeVerProyecto(get(portalPath(token)).data.proyectoId);
+    }
+
+    function escrituraPublicaSellada(token) {
+      return getAfter(portalPath(token)).data.ultimaEscrituraPublica == request.time;
+    }
+
+    function textoValido(v, max) {
+      return v is string && v.size() > 0 && v.size() <= max;
+    }
+
     match /portales/{token} {
-      allow read: if true;
-      allow write: if isSignedIn();
+      allow get: if resource.data.activo == true ||
+        (isUsuarioActivo() && puedeVerProyecto(resource.data.proyectoId));
+      allow list: if isUsuarioActivo() && puedeVerProyecto(resource.data.proyectoId);
+      allow create: if isUsuarioActivo() &&
+        puedeVerProyecto(request.resource.data.proyectoId) &&
+        request.resource.data.activo == true;
+      allow update: if
+        (isUsuarioActivo() &&
+         puedeVerProyecto(resource.data.proyectoId) &&
+         request.resource.data.proyectoId == resource.data.proyectoId) ||
+        // Sello anti-spam del cliente: solo ese campo, con la hora del servidor, cada ≥ 3 s
+        (resource.data.activo == true &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ultimaEscrituraPublica']) &&
+         request.resource.data.ultimaEscrituraPublica == request.time &&
+         (!('ultimaEscrituraPublica' in resource.data) ||
+          request.time > resource.data.ultimaEscrituraPublica + duration.value(3, 's')));
+      allow delete: if isUsuarioActivo() && puedeVerProyecto(resource.data.proyectoId);
 
-      // Aprobaciones: el cliente puede crear/leer sin auth
+      // Aprobación: solo hitos completados que pertenezcan al proyecto del portal
       match /aprobaciones/{hitoId} {
-        allow read: if true;
-        allow write: if true;
+        allow read: if portalActivo(token) || equipoDelPortal(token);
+        allow create: if portalActivo(token) && escrituraPublicaSellada(token) &&
+          request.resource.data.keys().hasOnly(['hitoId', 'nombre', 'aprobadoEn']) &&
+          request.resource.data.hitoId == hitoId &&
+          textoValido(request.resource.data.nombre, 100) &&
+          request.resource.data.aprobadoEn == request.time &&
+          get(/databases/$(database)/documents/tareas/$(hitoId)).data.proyectoId == get(portalPath(token)).data.proyectoId &&
+          get(/databases/$(database)/documents/tareas/$(hitoId)).data.tipo == 'hito' &&
+          get(/databases/$(database)/documents/tareas/$(hitoId)).data.estado == 'completada';
+        allow update, delete: if equipoDelPortal(token);
       }
 
-      // Comentarios del portal: público (cliente sin cuenta)
       match /comentarios/{cId} {
-        allow read: if true;
-        allow create: if true;
-        allow update, delete: if isSignedIn();
+        allow read: if portalActivo(token) || equipoDelPortal(token);
+        allow create: if portalActivo(token) && escrituraPublicaSellada(token) &&
+          request.resource.data.keys().hasOnly(['texto', 'autor', 'creadoEn']) &&
+          textoValido(request.resource.data.texto, 2000) &&
+          textoValido(request.resource.data.autor, 100) &&
+          request.resource.data.creadoEn == request.time;
+        allow update, delete: if equipoDelPortal(token);
       }
 
-      // Solicitudes de cambio: cliente crea, solo el equipo lee
+      // Solicitudes de cambio: el cliente crea, solo el equipo las lee
       match /solicitudes/{sId} {
-        allow create: if true;
-        allow read, update, delete: if isSignedIn();
+        allow create: if portalActivo(token) && escrituraPublicaSellada(token) &&
+          request.resource.data.keys().hasOnly(['descripcion', 'autor', 'creadoEn', 'estado']) &&
+          textoValido(request.resource.data.descripcion, 4000) &&
+          textoValido(request.resource.data.autor, 100) &&
+          request.resource.data.creadoEn == request.time &&
+          request.resource.data.estado == 'pendiente';
+        allow read, update, delete: if equipoDelPortal(token);
       }
     }
   }

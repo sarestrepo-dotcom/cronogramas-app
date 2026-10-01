@@ -24,3 +24,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Build de Cloud Functions (se genera en predeploy)
+functions/lib/

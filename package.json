@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-cronogramas \"node --test tests/firestore.rules.test.mjs\""
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.12",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.14",
