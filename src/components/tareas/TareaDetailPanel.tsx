@@ -105,6 +105,11 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
                   {tarea.fase}
                 </span>
               )}
+              {tarea.sprint && (
+                <span className="text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">
+                  {tarea.sprint}
+                </span>
+              )}
               <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold', tipoConfig.cls)}>
                 {tipoConfig.icon} {tipoConfig.label}
               </span>

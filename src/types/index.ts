@@ -72,6 +72,7 @@ export interface Tarea {
   numero?: string          // numeración propia (Sheet/importación); si falta se calcula sola
   bloqueo?: TipoBloqueo    // de quién depende desbloquear una tarea bloqueada
   bloqueadaDesde?: Timestamp // cuándo pasó a 'bloqueada' (se borra al desbloquear)
+  sprint?: string          // p. ej. "Sprint 01"
   creadoPor: string
   creadoEn: Timestamp
   actualizadoEn: Timestamp

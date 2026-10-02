@@ -281,7 +281,8 @@ function sincronizarUnaVez(proyectoId, empresaId) {
 const KEYWORDS = {
   numero: ['numero', 'num', 'n', '#', 'numeracion', 'item'],
   titulo: ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'concepto'],
-  fase: ['fase', 'phase', 'frente', 'etapa', 'sprint', 'modulo', 'categoria'],
+  fase: ['fase', 'phase', 'frente', 'etapa', 'modulo', 'categoria'],
+  sprint: ['sprint', 'sprint propuesto', 'iteracion', 'iteration'],
   padre: ['padre', 'parent', 'grupo padre', 'tarea padre', 'pertenece a', 'grupo'],
   fechaInicio: ['inicio', 'inicial', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio', 'fecha inicial'],
   // "entrega" sola NO: chocaría con la columna "Entregable"
@@ -302,19 +303,27 @@ function normalizar(s) {
   return String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9\s%#]/g, '').trim()
 }
 
-function detectarCampo(header) {
+// Devuelve { campo, puntaje }: nombre exacto principal (3) > sinónimo exacto (2) > parcial (1)
+function detectarCampoConPuntaje(header) {
   const norm = normalizar(header)
   if (!norm) return null
-  let best = null, bestScore = 0
+  let best = null, bestScore = 0, bestLen = 0
   for (const campo in KEYWORDS) {
-    for (const kw of KEYWORDS[campo]) {
-      if (norm === kw) return campo
-      if (kw.length > 1 && (norm.startsWith(kw) || norm.includes(kw)) && kw.length > bestScore) {
-        bestScore = kw.length; best = campo
+    KEYWORDS[campo].forEach(function (kw, i) {
+      let score = 0
+      if (norm === kw) score = i === 0 ? 3 : 2
+      else if (kw.length > 1 && (norm.startsWith(kw) || norm.includes(kw))) score = 1
+      if (score > bestScore || (score === bestScore && score === 1 && kw.length > bestLen)) {
+        best = campo; bestScore = score; bestLen = kw.length
       }
-    }
+    })
   }
-  return best
+  return best ? { campo: best, puntaje: bestScore } : null
+}
+
+function detectarCampo(header) {
+  const r = detectarCampoConPuntaje(header)
+  return r ? r.campo : null
 }
 
 // Busca la fila de encabezados en las primeras 10 filas (la primera con columna de título)
@@ -322,12 +331,13 @@ function leerEncabezados(sheet) {
   const lastCol = Math.max(1, sheet.getLastColumn())
   const filas = sheet.getRange(1, 1, Math.min(10, Math.max(1, sheet.getLastRow())), lastCol).getValues()
   for (let r = 0; r < filas.length; r++) {
-    const cols = {}
+    // Cada campo toma la columna con mejor coincidencia ("Fase" gana sobre "Frente")
+    const cols = {}, puntajes = {}
     filas[r].forEach(function (h, c) {
       const txt = String(h).trim()
       if (txt === COL_SYNC || txt === COL_ID) { cols[txt] = c; return }
-      const campo = detectarCampo(txt)
-      if (campo && cols[campo] === undefined) cols[campo] = c
+      const d = detectarCampoConPuntaje(txt)
+      if (d && (puntajes[d.campo] === undefined || d.puntaje > puntajes[d.campo])) { cols[d.campo] = c; puntajes[d.campo] = d.puntaje }
     })
     if (cols.titulo !== undefined) return { headerRow: r + 1, cols: cols }
   }
@@ -429,6 +439,7 @@ function parsearFila(row, cols, tz, id, indice) {
     notas: String(celda(row, cols, 'notas')).trim(),
     estado: estado,
     entregables: String(celda(row, cols, 'entregables')).trim(),
+    sprint: String(celda(row, cols, 'sprint')).trim(),
     bloqueo: parsearBloqueo(celda(row, cols, 'bloqueo')),
     prioridad: PRIORIDADES[normalizar(celda(row, cols, 'prioridad'))] || 'media',
     progreso: progreso,
@@ -477,6 +488,7 @@ function camposGestionados(cols) {
   if (cols.descripcion !== undefined) campos.push('descripcion')
   if (cols.notas !== undefined) campos.push('notas')
   if (cols.entregables !== undefined) campos.push('entregables')
+  if (cols.sprint !== undefined) campos.push('sprint')
   if (cols.bloqueo !== undefined) campos.push('bloqueo')
   if (cols.prioridad !== undefined) campos.push('prioridad')
   if (cols.responsable !== undefined) campos.push('asignadoA', 'asignadosA')
@@ -502,6 +514,7 @@ function aFirestore(f, campos) {
   set('descripcion', s(f.descripcion))
   set('notas', s(f.notas))
   set('entregables', s(f.entregables))
+  set('sprint', s(f.sprint))
   set('bloqueo', s(f.bloqueo))
   set('prioridad', { stringValue: f.prioridad })
   set('asignadoA', s(f.responsables[0]))
@@ -522,7 +535,7 @@ function valorComparable(x) {
 }
 
 // Cambios visibles para el historial de la tarea (mismo formato que registra la app)
-const CAMPOS_HISTORIAL = ['titulo', 'estado', 'progreso', 'fechaInicio', 'fechaFin', 'asignadosA', 'prioridad', 'notas', 'fase', 'bloqueo', 'entregables']
+const CAMPOS_HISTORIAL = ['titulo', 'estado', 'progreso', 'fechaInicio', 'fechaFin', 'asignadosA', 'prioridad', 'notas', 'fase', 'bloqueo', 'entregables', 'sprint']
 const ESTADO_LABEL = { pendiente: 'Pendiente', en_progreso: 'En progreso', completada: 'Completada', bloqueada: 'Bloqueada' }
 
 function legible(campo, x) {

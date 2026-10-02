@@ -12,7 +12,7 @@ import type { Tarea, TipoTarea, EstadoTarea } from '@/types'
 type CampoImport =
   | 'titulo' | 'fechaInicio' | 'fechaFin' | 'prioridad'
   | 'tipo' | 'responsable' | 'descripcion' | 'progreso'
-  | 'fase' | 'notas' | 'estado' | 'padre' | 'numero' | 'dependencia' | 'entregables' | 'bloqueo' | 'ignorar'
+  | 'fase' | 'notas' | 'estado' | 'padre' | 'numero' | 'dependencia' | 'entregables' | 'bloqueo' | 'sprint' | 'ignorar'
 
 const CAMPO_LABELS: Record<CampoImport, string> = {
   titulo:      'Título',
@@ -31,12 +31,13 @@ const CAMPO_LABELS: Record<CampoImport, string> = {
   dependencia: 'Dependencia (número)',
   entregables: 'Entregable',
   bloqueo:     'Bloqueo (interno/cliente)',
+  sprint:      'Sprint',
   ignorar:     '— Ignorar',
 }
 
 const CAMPOS_ORDEN: CampoImport[] = [
   'numero', 'titulo', 'tipo', 'fase', 'padre', 'fechaInicio', 'fechaFin', 'responsable',
-  'estado', 'bloqueo', 'prioridad', 'progreso', 'dependencia', 'notas', 'entregables', 'descripcion', 'ignorar',
+  'estado', 'bloqueo', 'sprint', 'prioridad', 'progreso', 'dependencia', 'notas', 'entregables', 'descripcion', 'ignorar',
 ]
 
 // ─── FilaTarea ────────────────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ interface FilaTarea {
   dependenciaRaw: string
   entregables: string
   bloqueo: '' | 'interno' | 'cliente'
+  sprint: string
   valida: boolean
   error?: string
 }
@@ -111,7 +113,8 @@ function validarFecha(s: string): boolean {
 const CAMPO_KEYWORDS: Record<Exclude<CampoImport, 'ignorar'>, string[]> = {
   numero:      ['numero', 'num', 'n', '#', 'id', 'numeracion', 'item'],
   titulo:      ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'concepto'],
-  fase:        ['fase', 'phase', 'frente', 'etapa', 'sprint', 'modulo', 'categoria'],
+  fase:        ['fase', 'phase', 'frente', 'etapa', 'modulo', 'categoria'],
+  sprint:      ['sprint', 'sprint propuesto', 'iteracion', 'iteration'],
   padre:       ['padre', 'parent', 'grupo padre', 'tarea padre', 'pertenece a', 'grupo'],
   fechaInicio: ['inicio', 'inicial', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio', 'fecha inicial'],
   // "entrega" sola NO: chocaría con la columna "Entregable"
@@ -184,7 +187,7 @@ function detectarMapping(headers: string[], sep: string): Record<number, CampoIm
 function parsearConMapeo(line: string, sep: string, mapping: Record<number, CampoImport>): FilaTarea {
   const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ''))
   let titulo = '', numero = '', fase = '', padre = '', fechaInicio = '', fechaFin = ''
-  let responsable = '', descripcion = '', notas = '', dependenciaRaw = '', entregables = '', bloqueoRaw = ''
+  let responsable = '', descripcion = '', notas = '', dependenciaRaw = '', entregables = '', bloqueoRaw = '', sprint = ''
   let prioridadRaw = '', tipoRaw = '', progresoRaw = '', estadoRaw = ''
   let hayFechaInicio = false, hayFechaFin = false
 
@@ -207,6 +210,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
       case 'dependencia': dependenciaRaw = val.trim(); break
       case 'entregables': entregables = val.trim(); break
       case 'bloqueo':     bloqueoRaw = normalizar(val); break
+      case 'sprint':      sprint = val.trim(); break
     }
   }
 
@@ -225,7 +229,7 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
   const bloqueo: FilaTarea['bloqueo'] =
     /client|extern/.test(bloqueoRaw) ? 'cliente' : /intern|equipo/.test(bloqueoRaw) ? 'interno' : ''
 
-  return { titulo, numero, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, dependenciaRaw, entregables, bloqueo, valida: !error, error }
+  return { titulo, numero, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, dependenciaRaw, entregables, bloqueo, sprint, valida: !error, error }
 }
 
 // ─── Google Sheets fetcher ────────────────────────────────────────────────────
@@ -459,6 +463,7 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
           numero: f.numero || undefined,
           entregables: f.entregables || undefined,
           bloqueo: f.bloqueo || undefined,
+          sprint: f.sprint || undefined,
           orden: i * 1000,
           proyectoId, empresaId, dependencias: [], creadoPor: uid,
         } as Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>)

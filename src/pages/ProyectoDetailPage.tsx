@@ -72,7 +72,8 @@ export function ProyectoDetailPage() {
   // Estado y bloqueo viven en la URL (?estado=bloqueada&bloqueo=cliente) para poder compartir la vista
   const filtroEstado = (searchParams.get('estado') ?? '') as EstadoTarea | ''
   const filtroBloqueo = (searchParams.get('bloqueo') ?? '') as TipoBloqueo | 'sin' | ''
-  const setFiltroParam = (k: 'estado' | 'bloqueo', v: string) =>
+  const filtroSprint = searchParams.get('sprint') ?? ''
+  const setFiltroParam = (k: 'estado' | 'bloqueo' | 'sprint', v: string) =>
     setSearchParams(p => { if (v) p.set(k, v); else p.delete(k); return p }, { replace: true })
   const [showProcesarEmail, setShowProcesarEmail] = useState(false)
   const [showHerramientas, setShowHerramientas] = useState(false)
@@ -172,16 +173,17 @@ export function ProyectoDetailPage() {
     tareasActivas.filter(t => t.estado !== 'completada' && !isVencida(t.fechaFin) && isProximaAVencer(t.fechaFin, 3)).length, [tareasActivas])
 
   const filteredTareas = useMemo(() => {
-    if (!filtroResponsable && !filtroGrupo && !filtroEstado && !filtroBloqueo) return enrichedTareas
+    if (!filtroResponsable && !filtroGrupo && !filtroEstado && !filtroBloqueo && !filtroSprint) return enrichedTareas
     // Estado/bloqueo se evalúan en tareas (no grupos); se conservan los grupos ancestros para
     // que la jerarquía se siga viendo
     let base = enrichedTareas
-    if (filtroEstado || filtroBloqueo) {
+    if (filtroEstado || filtroBloqueo || filtroSprint) {
       const porId = new Map(enrichedTareas.map(t => [t.id, t]))
       const visibles = new Set<string>()
       for (const t of enrichedTareas) {
         if (t.tipo === 'grupo') continue
         if (filtroEstado && t.estado !== filtroEstado) continue
+        if (filtroSprint && (filtroSprint === 'sin' ? !!t.sprint : t.sprint !== filtroSprint)) continue
         if (filtroBloqueo && (t.estado !== 'bloqueada' || (filtroBloqueo === 'sin' ? !!t.bloqueo : t.bloqueo !== filtroBloqueo))) continue
         visibles.add(t.id)
         let p = t.parentId ? porId.get(t.parentId) : undefined
@@ -200,9 +202,11 @@ export function ProyectoDetailPage() {
       }
       return true
     })
-  }, [enrichedTareas, filtroResponsable, filtroGrupo, filtroEstado, filtroBloqueo])
+  }, [enrichedTareas, filtroResponsable, filtroGrupo, filtroEstado, filtroBloqueo, filtroSprint])
 
-  const hasFilters = filtroResponsable || filtroGrupo || filtroEstado || filtroBloqueo
+  const hasFilters = filtroResponsable || filtroGrupo || filtroEstado || filtroBloqueo || filtroSprint
+  const sprintsProyecto = useMemo(() => [...new Set(tareas.map(t => t.sprint).filter(Boolean) as string[])]
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true })), [tareas])
 
   useEffect(() => {
     if (empresa) setEmpresaActiva(empresa)
@@ -461,8 +465,16 @@ export function ProyectoDetailPage() {
             <option value="cliente">Bloqueo del cliente</option>
             <option value="sin">Bloqueadas sin clasificar</option>
           </select>
+          {sprintsProyecto.length > 0 && (
+            <select value={filtroSprint} onChange={e => setFiltroParam('sprint', e.target.value)}
+              className={cn('text-sm border rounded-xl px-3 py-1.5 bg-white', filtroSprint ? 'border-indigo-300 text-indigo-700' : 'border-slate-200 text-slate-600')}>
+              <option value="">Todos los sprints</option>
+              {sprintsProyecto.map(s => <option key={s} value={s}>{s}</option>)}
+              <option value="sin">Sin sprint</option>
+            </select>
+          )}
           {hasFilters && (
-            <button onClick={() => { setFiltroResponsable(''); setFiltroGrupo(''); setSearchParams(p => { p.delete('estado'); p.delete('bloqueo'); return p }, { replace: true }) }}
+            <button onClick={() => { setFiltroResponsable(''); setFiltroGrupo(''); setSearchParams(p => { p.delete('estado'); p.delete('bloqueo'); p.delete('sprint'); return p }, { replace: true }) }}
               className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-lg transition-colors">
               <X size={11} /> Limpiar
             </button>
@@ -929,11 +941,14 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
   const [links, setLinks] = useState<string[]>(tarea?.links ?? [])
   const [newLink, setNewLink] = useState('')
   const [fase, setFase] = useState(tarea?.fase ?? '')
+  const [sprint, setSprint] = useState(tarea?.sprint ?? '')
   const [notas, setNotas] = useState(tarea?.notas ?? '')
   const [bloqueo, setBloqueo] = useState<TipoBloqueo | ''>(tarea?.bloqueo ?? '')
   const [saving, setSaving] = useState(false)
 
   const fasesExistentes = [...new Set(tareas.map(t => t.fase).filter(Boolean) as string[])].sort()
+  const sprintsExistentes = [...new Set(tareas.map(t => t.sprint).filter(Boolean) as string[])]
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
   const posiblesParents = tareas.filter((t) => t.id !== tarea?.id && t.tipo === 'grupo' && !t.parentId)
   const posiblesDependencias = tareas.filter((t) => t.id !== tarea?.id)
 
@@ -965,6 +980,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
         dependencias,
         links: links.filter(l => l.trim()),
         fase: fase.trim() || undefined,
+        sprint: sprint.trim() || undefined,
         notas: notas.trim() || undefined,
         ...(estado === 'bloqueada' && bloqueo ? { bloqueo } : {}),
       }
@@ -972,7 +988,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
         const update: Record<string, unknown> = { ...data }
         if (!parentId && tarea.parentId) update.parentId = deleteField()
         // Campos vaciados en el formulario: borrarlos (undefined se ignoraría y volvería el valor anterior)
-        for (const k of ['notas', 'fase', 'asignadoA', 'asignadosA', 'bloqueo'] as const) {
+        for (const k of ['notas', 'fase', 'sprint', 'asignadoA', 'asignadosA', 'bloqueo'] as const) {
           if (update[k] === undefined && tarea[k] !== undefined) update[k] = deleteField()
         }
         await actualizarTarea(tarea.id, update as Partial<Tarea>)
@@ -1021,6 +1037,11 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             ) : (
               <input className="input-base" value={fase} onChange={(e) => setFase(e.target.value)} placeholder="Ej: F1 - Cimentar" />
             )}
+          </FormField>
+
+          <FormField label="Sprint (opcional)">
+            <input className="input-base" list="sprints-existentes" value={sprint} onChange={(e) => setSprint(e.target.value)} placeholder="Ej: Sprint 01" />
+            <datalist id="sprints-existentes">{sprintsExistentes.map(s => <option key={s} value={s} />)}</datalist>
           </FormField>
 
           <FormField label="Título">

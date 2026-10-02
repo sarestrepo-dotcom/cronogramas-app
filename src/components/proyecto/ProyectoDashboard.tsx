@@ -141,8 +141,9 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
   const globalPct   = total > 0 ? Math.round(nonGrupo.reduce((s, t) => s + (t.progreso ?? 0), 0) / total) : 0
 
   const grupos = allTareas.filter(t => t.tipo === 'grupo')
-  const [vistaAvance, setVistaAvance] = useState<'fases' | 'grupos'>('fases')
+  const [vistaAvance, setVistaAvance] = useState<'fases' | 'grupos' | 'sprints'>('fases')
   const fases = useMemo(() => calcularAvancePorFase(nonGrupo, allTareas), [nonGrupo, allTareas])
+  const sprints = useMemo(() => calcularAvancePorFase(nonGrupo, allTareas, t => t.sprint?.trim() ?? '', false), [nonGrupo, allTareas])
   const hitos  = tareas.filter(t => t.tipo === 'hito').sort((a, b) =>
     (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
 
@@ -182,14 +183,14 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
       </div>
 
       {/* Avance por fase (franjas moradas) o por grupo (▶ tareas contenedoras) */}
-      {(fases.length > 0 || grupos.length > 0) && (
+      {(fases.length > 0 || grupos.length > 0 || sprints.length > 0) && (
         <div>
           <div className="flex items-center justify-between mb-3 gap-3">
             <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">
-              {vistaAvance === 'fases' ? 'Avance por fase' : 'Avance por grupo'}
+              {vistaAvance === 'fases' ? 'Avance por fase' : vistaAvance === 'sprints' ? 'Avance por sprint' : 'Avance por grupo'}
             </h3>
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
-              {([['fases', `Fases (${fases.length})`], ['grupos', `Grupos (${grupos.length})`]] as const).map(([v, label]) => (
+              {([['fases', `Fases (${fases.length})`], ['grupos', `Grupos (${grupos.length})`], ...(sprints.length ? [['sprints', `Sprints (${sprints.length})`]] : [])] as Array<[typeof vistaAvance, string]>).map(([v, label]) => (
                 <button key={v} onClick={() => setVistaAvance(v)}
                   className={cn('px-3 py-1 rounded-md text-xs font-medium transition-colors',
                     vistaAvance === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
@@ -198,7 +199,7 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
               ))}
             </div>
           </div>
-          {(vistaAvance === 'fases' ? fases : grupos).length === 0 ? (
+          {(vistaAvance === 'fases' ? fases : vistaAvance === 'sprints' ? sprints : grupos).length === 0 ? (
             <p className="text-sm text-slate-400 bg-white rounded-xl border border-dashed border-slate-200 p-4 text-center">
               {vistaAvance === 'fases'
                 ? 'Ninguna tarea tiene Fase asignada.'
@@ -206,8 +207,8 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
             </p>
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {(vistaAvance === 'fases'
-              ? fases.map(f => ({ key: f.nombre, titulo: f.nombre, icono: '', progreso: f.progreso, estado: f.estado, detalle: `${f.completadas}/${f.total} tareas completadas` }))
+            {(vistaAvance !== 'grupos'
+              ? (vistaAvance === 'fases' ? fases : sprints).map(f => ({ key: f.nombre, titulo: f.nombre, icono: '', progreso: f.progreso, estado: f.estado, detalle: `${f.completadas}/${f.total} tareas completadas` }))
               : grupos.map(g => ({ key: g.id, titulo: g.titulo, icono: '▶ ', progreso: g.progreso ?? 0, estado: g.estado, detalle: '' }))
             ).map(c => (
               <div key={c.key} className="bg-white rounded-xl border border-slate-200 p-4">
@@ -336,12 +337,14 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
 
 // La fase de una tarea es la suya o, si no tiene, la de su ancestro más cercano.
 // Avance = promedio de las tareas (completada cuenta 100%), igual que enrichTareas.
-function calcularAvancePorFase(tareas: Tarea[], allTareas: Tarea[]) {
+// `clave` permite reutilizarlo para sprints; `heredar` busca el valor en los ancestros
+function calcularAvancePorFase(tareas: Tarea[], allTareas: Tarea[], clave: (t: Tarea) => string = t => t.fase?.trim() ?? '', heredar = true) {
   const porId = new Map(allTareas.map(t => [t.id, t]))
   const faseDe = (t: Tarea): string => {
+    if (!heredar) return clave(t)
     let cur: Tarea | undefined = t
     for (let i = 0; cur && i < 50; i++) {
-      if (cur.fase?.trim()) return cur.fase.trim()
+      if (clave(cur)) return clave(cur)
       cur = cur.parentId ? porId.get(cur.parentId) : undefined
     }
     return ''
@@ -357,8 +360,10 @@ function calcularAvancePorFase(tareas: Tarea[], allTareas: Tarea[]) {
     map.get(f)!.push(t)
     if (t.orden !== undefined) primerOrden.set(f, Math.min(primerOrden.get(f) ?? Infinity, t.orden))
   }
-  const orden = [...map.keys()].sort((a, b) =>
-    compararFases({ nombre: a, orden: primerOrden.get(a) }, { nombre: b, orden: primerOrden.get(b) }))
+  // Sprints: por nombre (Sprint 01, 02…); fases: por orden de aparición
+  const orden = [...map.keys()].sort((a, b) => heredar
+    ? compararFases({ nombre: a, orden: primerOrden.get(a) }, { nombre: b, orden: primerOrden.get(b) })
+    : compararFases({ nombre: a }, { nombre: b }))
   return orden.map(nombre => {
     const ts = map.get(nombre)!
     const completadas = ts.filter(t => t.estado === 'completada').length
