@@ -408,6 +408,20 @@ Cloud Functions.** El token es un UUID (128 bits) en `portales/{token}`.
   (`duenos`), en el mismo batch. El enlace abre `?portal=TOKEN` → pestaña Actividad. No hay email
   (requeriría Cloud Functions / plan Blaze).
 
+### Google Sheets (Sheet → App, tiempo real)
+Apps Script en `public/integraciones/cronogramas-sheets.gs` (+ `appsscript.json`), que la app
+ofrece para copiar en **Herramientas → Google Sheets** (`SheetsSyncModal`). Sin Cloud Functions:
+- El script se instala en el Sheet y escribe en Firestore por REST con el token OAuth de quien lo
+  vinculó (`ScriptApp.getOAuthToken()`, scope `datastore`). Al ser credencial IAM, **no pasa por
+  firestore.rules**: esa persona debe tener acceso IAM al proyecto de Firebase.
+- Triggers instalables onEdit/onChange + respaldo cada 10 min. LockService evita corridas simultáneas.
+- Solo filas con la casilla **Sincronizar**; la columna **ID App** guarda el id de la tarea.
+- Tareas creadas así llevan `origen: 'sheets'`. Solo esas se actualizan/eliminan; las de la app no
+  se tocan. Solo se escriben los campos cuyas columnas existen en la hoja.
+- Escribe `proyectos/{id}.sheetSync` (url, nombre, ultimaSync, filas, error) → badge en el proyecto.
+- Lógica de columnas/jerarquía espejo de `ImportarTareasModal` (mantener ambas alineadas).
+- Limitación: la copia pública del portal se refresca cuando alguien del equipo abre el proyecto.
+
 ### Búsqueda global (Cmd+K)
 `SearchModal` carga todas las tareas y proyectos del usuario al abrirse. Las queries de Firestore con `in` están divididas en chunks de 10 (límite de Firestore). Navega a `/empresa/:id/proyecto/:id?tarea=:id` para abrir el panel de tarea directamente.
 

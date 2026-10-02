@@ -5,7 +5,7 @@ import {
   Plus, List, BarChart2, Table2, ArrowLeft, Circle, CheckCircle2,
   Clock, MoreVertical, Trash2, Pencil, Upload, ChevronDown, ChevronRight,
   LayoutDashboard, Columns3, Link2, X, Filter, Printer, LayoutTemplate,
-  Users, AlertTriangle, RotateCcw, Settings2, Mail,
+  Users, AlertTriangle, RotateCcw, Settings2, Mail, Sheet,
 } from 'lucide-react'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useTareas } from '@/hooks/useTareas'
@@ -33,6 +33,7 @@ import { LineasBaseModal } from '@/components/lineasBase/LineasBaseModal'
 import { PlantillasModal } from '@/components/plantillas/PlantillasModal'
 import { abrirVistaPDF } from '@/components/proyecto/PrintView'
 import { PortalModal } from '@/components/proyecto/PortalModal'
+import { SheetsSyncModal } from '@/components/proyecto/SheetsSyncModal'
 
 type TopTab = 'cronograma' | 'dashboard'
 type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt' | 'carga'
@@ -71,6 +72,7 @@ export function ProyectoDetailPage() {
   const [showHerramientas, setShowHerramientas] = useState(false)
   const [showEditProyecto, setShowEditProyecto] = useState(false)
   const [showPortal, setShowPortal] = useState(false)
+  const [showSheets, setShowSheets] = useState(false)
   const [portalTokenActividad, setPortalTokenActividad] = useState<string | undefined>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -286,6 +288,16 @@ export function ProyectoDetailPage() {
                 </span>
               )
             )}
+            {proyecto?.sheetSync && (
+              <button onClick={() => setShowSheets(true)}
+                title={proyecto.sheetSync.error ? `Error de sincronización: ${proyecto.sheetSync.error}` : `Sincronizado con "${proyecto.sheetSync.nombre}"`}
+                className={cn('flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border',
+                  proyecto.sheetSync.error
+                    ? 'text-rose-600 bg-rose-50 border-rose-200'
+                    : 'text-emerald-700 bg-emerald-50 border-emerald-200')}>
+                <Sheet size={11} /> {proyecto.sheetSync.error ? 'Error en Sheet' : 'Google Sheets'}
+              </button>
+            )}
           </div>
           <button onClick={() => setShowModal(true)}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
@@ -373,6 +385,10 @@ export function ProyectoDetailPage() {
                       <button onClick={() => { setShowPortal(true); setShowHerramientas(false) }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
                         <Link2 size={14} className="text-slate-500" /> Portal del cliente
+                      </button>
+                      <button onClick={() => { setShowSheets(true); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <Sheet size={14} className="text-emerald-600" /> Google Sheets
                       </button>
                       <button onClick={() => {
                           const cliente = clientes.find(c => c.id === proyecto?.clienteId)
@@ -583,6 +599,10 @@ export function ProyectoDetailPage() {
           onClose={() => setShowEditProyecto(false)}
           onSave={() => setShowEditProyecto(false)}
         />
+      )}
+
+      {showSheets && proyecto && (
+        <SheetsSyncModal proyecto={proyecto} onClose={() => setShowSheets(false)} />
       )}
 
       {showPortal && proyectoId && proyecto && (

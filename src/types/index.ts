@@ -34,6 +34,8 @@ export interface Proyecto {
   objetivo?: string
   descripcion?: string
   valorVenta?: number
+  /** Lo escribe el Apps Script del Google Sheet vinculado (Sheet → App) */
+  sheetSync?: { url: string; nombre: string; ultimaSync: Timestamp; filas: number; error?: string | null }
   fechaInicio: Timestamp
   fechaFin: Timestamp
   estado: 'activo' | 'pausado' | 'completado' | 'archivado'
@@ -64,6 +66,7 @@ export interface Tarea {
   fase?: string
   notas?: string
   entregables?: string     // deliverables / output description
+  origen?: 'sheets'        // creada/gestionada desde un Google Sheet vinculado
   creadoPor: string
   creadoEn: Timestamp
   actualizadoEn: Timestamp

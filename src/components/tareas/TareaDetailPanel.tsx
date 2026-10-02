@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { X, Pencil, Trash2, Calendar, Link, CheckCircle2, Circle, Clock, Flag, ExternalLink, Send, History, MessageSquare } from 'lucide-react'
+import { X, Pencil, Trash2, Calendar, Link, CheckCircle2, Circle, Clock, Flag, ExternalLink, Send, History, MessageSquare, Sheet } from 'lucide-react'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, diasRestantes, isVencida } from '@/lib/utils'
 import { agregarComentario, eliminarComentario, suscribirComentarios, suscribirHistorial } from '@/lib/firestore'
 import { useAuth } from '@/hooks/useAuth'
@@ -140,6 +140,12 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
         {/* Tab content */}
         {activeTab === 'detalle' && (
           <div className="flex-1 overflow-y-auto">
+            {tarea.origen === 'sheets' && (
+              <div className="mx-5 mt-4 flex gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                <Sheet size={14} className="flex-shrink-0 mt-0.5" />
+                <p>Esta tarea viene del <b>Google Sheet</b> vinculado. Edítala allá: los cambios hechos aquí en los campos del Sheet se sobrescriben en la próxima sincronización.</p>
+              </div>
+            )}
             {/* Status */}
             <div className="px-5 py-4 border-b border-slate-100">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Estado</p>
