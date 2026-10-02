@@ -14,7 +14,7 @@ import { useClientes } from '@/hooks/useClientes'
 import { useAuth } from '@/hooks/useAuth'
 import { useUndoStack } from '@/hooks/useUndoStack'
 import { useToast } from '@/components/ui/Toast'
-import { crearTarea, actualizarTarea, eliminarTarea, registrarCambio, listarPortalesPorProyecto, publicarPortales, type PortalResumen } from '@/lib/firestore'
+import { crearTarea, actualizarTarea, registrarCambio, listarPortalesPorProyecto, publicarPortales, type PortalResumen } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { calcularRutaCritica } from '@/lib/criticalPath'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer, BLOQUEO_COLORS } from '@/lib/utils'
@@ -34,6 +34,7 @@ import { PlantillasModal } from '@/components/plantillas/PlantillasModal'
 import { abrirVistaPDF } from '@/components/proyecto/PrintView'
 import { PortalModal } from '@/components/proyecto/PortalModal'
 import { SheetsSyncModal } from '@/components/proyecto/SheetsSyncModal'
+import { EliminarTareasModal } from '@/components/tareas/EliminarTareasModal'
 
 type TopTab = 'cronograma' | 'dashboard'
 type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt' | 'carga'
@@ -78,6 +79,7 @@ export function ProyectoDetailPage() {
   const [showEditProyecto, setShowEditProyecto] = useState(false)
   const [showPortal, setShowPortal] = useState(false)
   const [showSheets, setShowSheets] = useState(false)
+  const [idsAEliminar, setIdsAEliminar] = useState<string[] | null>(null)
   const [portalTokenActividad, setPortalTokenActividad] = useState<string | undefined>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -107,12 +109,7 @@ export function ProyectoDetailPage() {
     clearSelection()
   }
 
-  const handleBulkDelete = async () => {
-    if (!confirm(`¿Eliminar ${selectedIds.size} tarea${selectedIds.size > 1 ? 's' : ''}? Esta acción no se puede deshacer.`)) return
-    await Promise.all([...selectedIds].map(id => eliminarTarea(id)))
-    toast(`${selectedIds.size} tarea${selectedIds.size > 1 ? 's' : ''} eliminadas`, 'warning')
-    clearSelection()
-  }
+  const handleBulkDelete = () => setIdsAEliminar([...selectedIds])
 
   const empresa = empresas.find((e) => e.id === empresaId)
   const proyecto = proyectos.find((p) => p.id === proyectoId)
@@ -501,6 +498,7 @@ export function ProyectoDetailPage() {
             onSelectAll={selectAll}
             onEditTarea={(t) => { setEditTarea(t); setShowModal(true) }}
             onRowClick={(t) => setSelectedTarea(t)}
+            onEliminar={(id) => setIdsAEliminar([id])}
           />
         ) : vista === 'kanban' ? (
           <KanbanView
@@ -519,7 +517,7 @@ export function ProyectoDetailPage() {
             onMenuToggle={(id) => setMenuOpen(menuOpen === id ? null : id)}
             onMenuClose={() => setMenuOpen(null)}
             onEdit={(t) => setSelectedTarea(t)}
-            onDelete={async (id) => { if (confirm('¿Eliminar tarea?')) { await eliminarTarea(id); toast('Tarea eliminada', 'warning') } }}
+            onDelete={(id) => setIdsAEliminar([id])}
             onStatusChange={handleStatusChange}
             onRowClick={(t) => setSelectedTarea(t)}
           />
@@ -564,7 +562,7 @@ export function ProyectoDetailPage() {
           tareas={tareas}
           onClose={() => { setSelectedTarea(null); setSearchParams(p => { p.delete('panel'); return p }, { replace: true }) }}
           onEdit={(t) => { setSelectedTarea(null); setEditTarea(t); setShowModal(true) }}
-          onDelete={async (id) => { await eliminarTarea(id) }}
+          onDelete={(id) => setIdsAEliminar([id])}
           onStatusChange={handleStatusChange}
         />
       )}
@@ -631,6 +629,15 @@ export function ProyectoDetailPage() {
           clientes={clientes}
           onClose={() => setShowEditProyecto(false)}
           onSave={() => setShowEditProyecto(false)}
+        />
+      )}
+
+      {idsAEliminar && (
+        <EliminarTareasModal
+          ids={idsAEliminar}
+          tareas={tareas}
+          onClose={() => setIdsAEliminar(null)}
+          onDone={(n) => { toast(`${n} tarea${n === 1 ? '' : 's'} eliminada${n === 1 ? '' : 's'}`, 'warning'); clearSelection() }}
         />
       )}
 

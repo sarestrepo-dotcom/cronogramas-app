@@ -415,7 +415,7 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
             <Pencil size={14} /> Editar tarea
           </button>
           <button
-            onClick={() => { if (confirm('¿Eliminar esta tarea?')) { onDelete(tarea.id); onClose() } }}
+            onClick={() => { onDelete(tarea.id); onClose() }}
             className="p-2.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors border border-slate-200">
             <Trash2 size={16} />
           </button>

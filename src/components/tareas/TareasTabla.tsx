@@ -19,6 +19,8 @@ interface TareasTablaProps {
   onSelectAll?: (ids: string[]) => void
   onEditTarea?: (tarea: Tarea) => void
   onRowClick?: (tarea: Tarea) => void
+  /** Si se pasa, el padre gestiona la confirmación (p. ej. subtareas) */
+  onEliminar?: (id: string) => void
 }
 
 interface FilaNueva {
@@ -41,7 +43,7 @@ const PRIORIDAD_STYLES: Record<Tarea['prioridad'], string> = {
   critica: 'bg-red-100 text-red-700',
 }
 
-export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, numeros, selectedIds, onToggleSelect, onSelectAll, onEditTarea, onRowClick }: TareasTablaProps) {
+export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, numeros, selectedIds, onToggleSelect, onSelectAll, onEditTarea, onRowClick, onEliminar }: TareasTablaProps) {
   const today = new Date().toISOString().split('T')[0]
   const [editingCell, setEditingCell] = useState<{ id: string; field: string } | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -797,7 +799,7 @@ export function TareasTabla({ tareas, proyectoId, empresaId, uid, rutaCritica, n
 
                 {/* Acciones */}
                 <td className="px-3 py-2 border-b border-slate-100">
-                  <button onClick={() => { if (confirm('¿Eliminar tarea?')) eliminarTarea(tarea.id) }}
+                  <button onClick={() => { if (onEliminar) onEliminar(tarea.id); else if (confirm('¿Eliminar tarea?')) eliminarTarea(tarea.id) }}
                     className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
                     <Trash2 size={14} />
                   </button>
