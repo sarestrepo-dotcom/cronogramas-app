@@ -7,6 +7,7 @@ import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDa
 import { generarEmailsResumen } from '@/lib/emailUtils'
 import { exportCSV } from '@/lib/exportUtils'
 import { TareasBloqueadasModal } from './TareasBloqueadasModal'
+import { compararFases } from '@/lib/hierarchyUtils'
 import type { Tarea } from '@/types'
 
 type DashTab = 'resumen' | 'semanal'
@@ -332,8 +333,7 @@ function calcularAvancePorFase(tareas: Tarea[], allTareas: Tarea[]) {
     if (t.orden !== undefined) primerOrden.set(f, Math.min(primerOrden.get(f) ?? Infinity, t.orden))
   }
   const orden = [...map.keys()].sort((a, b) =>
-    (primerOrden.get(a) ?? Infinity) - (primerOrden.get(b) ?? Infinity) ||
-    a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' }))
+    compararFases({ nombre: a, orden: primerOrden.get(a) }, { nombre: b, orden: primerOrden.get(b) }))
   return orden.map(nombre => {
     const ts = map.get(nombre)!
     const completadas = ts.filter(t => t.estado === 'completada').length

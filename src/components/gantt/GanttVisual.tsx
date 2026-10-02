@@ -6,7 +6,7 @@ import {
 import { es } from 'date-fns/locale'
 import { Link2, Link2Off, GripVertical, Image, FileSpreadsheet } from 'lucide-react'
 import { cn, tsToDate } from '@/lib/utils'
-import { enrichTareas } from '@/lib/hierarchyUtils'
+import { enrichTareas, buildHierarchy } from '@/lib/hierarchyUtils'
 import { exportGanttPNG, exportCSV } from '@/lib/exportUtils'
 import type { Tarea } from '@/types'
 
@@ -46,56 +46,13 @@ type Row =
   | { kind: 'fase_header'; label: string }
   | { kind: 'tarea'; tarea: Tarea; nivel: number; barStart: Date; barEnd: Date }
 
+// Mismo orden y jerarquía que la vista Lista (fases en orden, orden del Sheet, multinivel).
+// enrichTareas ya deriva las fechas de los grupos a partir de sus hijos.
 function buildRows(tareas: Tarea[]): Row[] {
-  const enriched = enrichTareas(tareas)
-  const ids = new Set(enriched.map((t) => t.id))
-
-  const roots = enriched
-    .filter((t) => !t.parentId || !ids.has(t.parentId))
-    .sort((a, b) => {
-      const ag = a.tipo === 'grupo' ? 0 : 1
-      const bg = b.tipo === 'grupo' ? 0 : 1
-      if (ag !== bg) return ag - bg
-      return (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0)
-    })
-
-  const byFase = new Map<string, Tarea[]>()
-  const noFase: Tarea[] = []
-  for (const root of roots) {
-    const fase = root.fase?.trim() ?? ''
-    if (fase) {
-      if (!byFase.has(fase)) byFase.set(fase, [])
-      byFase.get(fase)!.push(root)
-    } else {
-      noFase.push(root)
-    }
-  }
-
-  const rows: Row[] = []
-
-  const pushRoot = (root: Tarea) => {
-    const children = enriched
-      .filter((t) => t.parentId === root.id)
-      .sort((a, b) => (a.fechaInicio?.seconds ?? 0) - (b.fechaInicio?.seconds ?? 0))
-    let barStart = tsToDate(root.fechaInicio)
-    let barEnd = tsToDate(root.fechaFin)
-    if ((root.tipo ?? 'tarea') === 'grupo' && children.length > 0) {
-      barStart = min(children.map((c) => tsToDate(c.fechaInicio)))
-      barEnd = max(children.map((c) => tsToDate(c.fechaFin)))
-    }
-    rows.push({ kind: 'tarea', tarea: root, nivel: 0, barStart, barEnd })
-    for (const child of children) {
-      rows.push({ kind: 'tarea', tarea: child, nivel: 1, barStart: tsToDate(child.fechaInicio), barEnd: tsToDate(child.fechaFin) })
-    }
-  }
-
-  for (const [fase, faseRoots] of byFase) {
-    rows.push({ kind: 'fase_header', label: fase })
-    for (const root of faseRoots) pushRoot(root)
-  }
-  for (const root of noFase) pushRoot(root)
-
-  return rows
+  return buildHierarchy(enrichTareas(tareas)).map((r): Row =>
+    r.kind === 'fase_header'
+      ? r
+      : { kind: 'tarea', tarea: r.tarea, nivel: r.nivel, barStart: tsToDate(r.tarea.fechaInicio), barEnd: tsToDate(r.tarea.fechaFin) })
 }
 
 function initials(name: string): string {

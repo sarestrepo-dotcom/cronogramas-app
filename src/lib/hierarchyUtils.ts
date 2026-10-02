@@ -6,6 +6,14 @@ export type HierarchyRow =
   | { kind: 'fase_header'; label: string }
   | { kind: 'tarea'; tarea: Tarea; nivel: number }
 
+// Orden de fases en toda la app (Lista, Gantt, Dashboard, portal): primero el orden en que
+// aparecen (campo `orden`, p. ej. la fila del Sheet), luego por nombre con números naturales
+// (Fase 2 antes que Fase 10).
+export function compararFases(a: { nombre: string; orden?: number }, b: { nombre: string; orden?: number }): number {
+  return (a.orden ?? Infinity) - (b.orden ?? Infinity) ||
+    a.nombre.localeCompare(b.nombre, 'es', { numeric: true, sensitivity: 'base' })
+}
+
 export function buildHierarchy(tareas: Tarea[]): HierarchyRow[] {
   const ids = new Set(tareas.map((t) => t.id))
 
@@ -45,7 +53,13 @@ export function buildHierarchy(tareas: Tarea[]): HierarchyRow[] {
     for (const child of children) pushTask(child, nivel + 1)
   }
 
-  for (const [fase, faseRoots] of byFase) {
+  const minOrden = (ts: Tarea[]) => {
+    const os = ts.map(t => t.orden).filter((o): o is number => o !== undefined)
+    return os.length ? Math.min(...os) : undefined
+  }
+  const fasesOrdenadas = [...byFase.entries()]
+    .sort(([a, ra], [b, rb]) => compararFases({ nombre: a, orden: minOrden(ra) }, { nombre: b, orden: minOrden(rb) }))
+  for (const [fase, faseRoots] of fasesOrdenadas) {
     result.push({ kind: 'fase_header', label: fase })
     for (const root of faseRoots) pushTask(root, 0)
   }
