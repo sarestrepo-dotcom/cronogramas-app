@@ -19,8 +19,7 @@ import {
   writeBatch,
   type DocumentData,
 } from 'firebase/firestore'
-import { db, functions } from './firebase'
-import { httpsCallable } from 'firebase/functions'
+import { db } from './firebase'
 import type { Empresa, Proyecto, Cliente, Tarea, UsuarioApp, Invitacion, Rol, UsuarioPermitido, EmailConfig, LineaBase, Comentario, CambioHistorial, Plantilla, PlantillaTarea } from '@/types'
 
 function clean(obj: Record<string, unknown>): Record<string, unknown> {
@@ -434,16 +433,6 @@ export async function guardarEmailConfig(uid: string, config: Omit<EmailConfig, 
   await setDoc(doc(db, 'email_config', uid), { ...config, uid })
 }
 
-export async function previewEmailSemanal(): Promise<Array<{nombre: string; email: string; body: string}>> {
-  const fn = httpsCallable(functions, 'previewEmailSemanal')
-  const result = await fn({})
-  return (result.data as { previews: Array<{nombre: string; email: string; body: string}> }).previews
-}
-
-export async function enviarEmailAhora(customBodies?: Array<{nombre: string; email: string; body: string}>): Promise<void> {
-  const fn = httpsCallable(functions, 'enviarEmailAhora')
-  await fn({ customBodies })
-}
 
 
 export function suscribirPermitidos(cb: (lista: UsuarioPermitido[]) => void): () => void {

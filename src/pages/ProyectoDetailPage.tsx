@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react'
 import { useParams, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom'
 import { Timestamp, deleteField } from 'firebase/firestore'
 import {
@@ -20,21 +20,31 @@ import { calcularRutaCritica } from '@/lib/criticalPath'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer, BLOQUEO_COLORS } from '@/lib/utils'
 import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
 import type { Empresa, Tarea, EstadoTarea, TipoTarea, TipoBloqueo } from '@/types'
-import { TareasTabla } from '@/components/tareas/TareasTabla'
-import { ImportarTareasModal } from '@/components/tareas/ImportarTareasModal'
 import { TareaDetailPanel } from '@/components/tareas/TareaDetailPanel'
-import { GanttVisual } from '@/components/gantt/GanttVisual'
-import { KanbanView } from '@/components/kanban/KanbanView'
-import { ProyectoDashboard } from '@/components/proyecto/ProyectoDashboard'
-import { WorkloadView } from '@/components/proyecto/WorkloadView'
-import { ProyectoModal } from '@/pages/ProyectosPage'
-import { ProcesarEmailModal } from '@/components/tareas/ProcesarEmailModal'
-import { LineasBaseModal } from '@/components/lineasBase/LineasBaseModal'
-import { PlantillasModal } from '@/components/plantillas/PlantillasModal'
-import { abrirVistaPDF } from '@/components/proyecto/PrintView'
-import { PortalModal } from '@/components/proyecto/PortalModal'
-import { SheetsSyncModal } from '@/components/proyecto/SheetsSyncModal'
 import { EliminarTareasModal } from '@/components/tareas/EliminarTareasModal'
+// PrintView abre una ventana nueva: se mantiene estático para no perder el gesto del usuario
+import { abrirVistaPDF } from '@/components/proyecto/PrintView'
+
+// Vistas y modales pesados se cargan bajo demanda (code splitting): la Lista abre rápido
+// y el resto se descarga solo cuando se usa.
+const TareasTabla         = lazy(() => import('@/components/tareas/TareasTabla').then(m => ({ default: m.TareasTabla })))
+const ImportarTareasModal = lazy(() => import('@/components/tareas/ImportarTareasModal').then(m => ({ default: m.ImportarTareasModal })))
+const GanttVisual         = lazy(() => import('@/components/gantt/GanttVisual').then(m => ({ default: m.GanttVisual })))
+const KanbanView          = lazy(() => import('@/components/kanban/KanbanView').then(m => ({ default: m.KanbanView })))
+const ProyectoDashboard   = lazy(() => import('@/components/proyecto/ProyectoDashboard').then(m => ({ default: m.ProyectoDashboard })))
+const WorkloadView        = lazy(() => import('@/components/proyecto/WorkloadView').then(m => ({ default: m.WorkloadView })))
+const ProyectoModal       = lazy(() => import('@/pages/ProyectosPage').then(m => ({ default: m.ProyectoModal })))
+const ProcesarEmailModal  = lazy(() => import('@/components/tareas/ProcesarEmailModal').then(m => ({ default: m.ProcesarEmailModal })))
+const LineasBaseModal     = lazy(() => import('@/components/lineasBase/LineasBaseModal').then(m => ({ default: m.LineasBaseModal })))
+const PlantillasModal     = lazy(() => import('@/components/plantillas/PlantillasModal').then(m => ({ default: m.PlantillasModal })))
+const PortalModal         = lazy(() => import('@/components/proyecto/PortalModal').then(m => ({ default: m.PortalModal })))
+const SheetsSyncModal     = lazy(() => import('@/components/proyecto/SheetsSyncModal').then(m => ({ default: m.SheetsSyncModal })))
+
+const CargandoVista = () => (
+  <div className="flex items-center justify-center h-64">
+    <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+)
 
 type TopTab = 'cronograma' | 'dashboard'
 type Vista = 'lista' | 'tabla' | 'kanban' | 'gantt' | 'carga'
@@ -538,6 +548,7 @@ export function ProyectoDetailPage() {
 
       {/* Content */}
       <div className={cn('flex-1 min-h-0', vista === 'tabla' && topTab === 'cronograma' ? 'overflow-hidden' : 'overflow-auto')}>
+        <Suspense fallback={<CargandoVista />}>
         {topTab === 'dashboard' ? (
           <ProyectoDashboard tareas={enrichedTareas} proyectoId={proyectoId} nombreParaCliente={proyecto?.nombre}
             nombresProyectos={esGlobal ? nombresProyectos : undefined}
@@ -606,6 +617,7 @@ export function ProyectoDetailPage() {
             }}
           />
         )}
+      </Suspense>
       </div>
 
       {/* Modal tarea */}
@@ -634,6 +646,7 @@ export function ProyectoDetailPage() {
       )}
 
       {/* Modal procesar email */}
+      <Suspense fallback={null}>
       {showProcesarEmail && proyectoId && empresaId && (
         <ProcesarEmailModal
           proyectoId={proyectoId}
@@ -723,6 +736,7 @@ export function ProyectoDetailPage() {
           onClose={() => { setShowPortal(false); setPortalTokenActividad(undefined) }}
         />
       )}
+      </Suspense>
     </div>
   )
 }

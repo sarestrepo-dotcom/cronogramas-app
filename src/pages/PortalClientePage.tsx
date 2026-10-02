@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   CalendarRange, CheckCircle2, Clock, AlertTriangle, Circle,
@@ -11,7 +11,8 @@ import {
   type Aprobacion, type PortalPublico,
 } from '@/lib/firestore'
 import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
-import { GanttVisual } from '@/components/gantt/GanttVisual'
+// El Gantt solo se descarga si el cliente lo abre
+const GanttVisual = lazy(() => import('@/components/gantt/GanttVisual').then(m => ({ default: m.GanttVisual })))
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, isVencida, diasBloqueada, textoDiasBloqueada } from '@/lib/utils'
 import type { Tarea } from '@/types'
 
@@ -325,7 +326,9 @@ export function PortalClientePage() {
           </div>
           {vistaCrono === 'gantt' ? (
             <div className="h-[640px]">
-              <GanttVisual tareas={enriched} />
+              <Suspense fallback={<div className="h-full flex items-center justify-center"><div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>}>
+                <GanttVisual tareas={enriched} />
+              </Suspense>
             </div>
           ) : (
           <div className="divide-y divide-slate-100">

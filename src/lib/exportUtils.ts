@@ -1,4 +1,3 @@
-import { toPng } from 'html-to-image'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { Tarea } from '@/types'
@@ -6,6 +5,7 @@ import { buildHierarchy } from './hierarchyUtils'
 import { tsToDate } from './utils'
 
 export async function exportGanttPNG(scrollContainer: HTMLElement, filename = 'gantt') {
+  const { toPng } = await import('html-to-image') // solo se descarga al exportar
   // The actual full-width content is the first child of the scroll container.
   const contentEl = scrollContainer.firstElementChild as HTMLElement | null
   if (!contentEl) return
