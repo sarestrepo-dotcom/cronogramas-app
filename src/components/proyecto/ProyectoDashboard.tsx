@@ -27,6 +27,8 @@ export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Prop
   const [filtroResponsable, setFiltroResponsable] = useState('')
   const [filtroGrupo, setFiltroGrupo] = useState('')
   const [soloHitos, setSoloHitos] = useState(false)
+  const [filtroEstado, setFiltroEstado] = useState<Tarea['estado'] | ''>('')
+  const [filtroBloqueo, setFiltroBloqueo] = useState<'interno' | 'cliente' | ''>('')
   const [showEmailModal, setShowEmailModal] = useState(false)
 
   const grupos = useMemo(() => tareas.filter(t => t.tipo === 'grupo'), [tareas])
@@ -39,9 +41,11 @@ export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Prop
       if (filtroResponsable && t.asignadoA !== filtroResponsable) return false
       if (filtroGrupo && t.parentId !== filtroGrupo && t.id !== filtroGrupo) return false
       if (soloHitos && t.tipo !== 'hito') return false
+      if (filtroEstado && t.tipo !== 'grupo' && t.estado !== filtroEstado) return false
+      if (filtroBloqueo && t.tipo !== 'grupo' && (t.estado !== 'bloqueada' || t.bloqueo !== filtroBloqueo)) return false
       return true
     })
-  }, [tareas, filtroResponsable, filtroGrupo, soloHitos])
+  }, [tareas, filtroResponsable, filtroGrupo, soloHitos, filtroEstado, filtroBloqueo])
 
   return (
     <div className="flex flex-col h-full">
@@ -69,6 +73,17 @@ export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Prop
             className="text-sm border border-slate-200 rounded-xl px-3 py-1.5 text-slate-600 bg-white">
             <option value="">Todos los grupos</option>
             {grupos.map(g => <option key={g.id} value={g.id}>{g.titulo}</option>)}
+          </select>
+          <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value as Tarea['estado'] | '')}
+            className="text-sm border border-slate-200 rounded-xl px-3 py-1.5 text-slate-600 bg-white">
+            <option value="">Todos los estados</option>
+            {(['pendiente', 'en_progreso', 'completada', 'bloqueada'] as Tarea['estado'][]).map(e => <option key={e} value={e}>{ESTADO_LABELS[e]}</option>)}
+          </select>
+          <select value={filtroBloqueo} onChange={e => setFiltroBloqueo(e.target.value as 'interno' | 'cliente' | '')}
+            className="text-sm border border-slate-200 rounded-xl px-3 py-1.5 text-slate-600 bg-white">
+            <option value="">Todos los bloqueos</option>
+            <option value="interno">Bloqueo interno</option>
+            <option value="cliente">Bloqueo del cliente</option>
           </select>
           <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
             <input type="checkbox" checked={soloHitos} onChange={e => setSoloHitos(e.target.checked)}
@@ -305,14 +320,20 @@ function calcularAvancePorFase(tareas: Tarea[], allTareas: Tarea[]) {
     }
     return ''
   }
-  const orden: string[] = []
+  // Orden de las fases: como aparecen en el cronograma/Sheet (menor `orden`); si no hay
+  // orden, por nombre con números naturales (Fase 2 antes que Fase 10)
   const map = new Map<string, Tarea[]>()
+  const primerOrden = new Map<string, number>()
   for (const t of tareas) {
     const f = faseDe(t)
     if (!f) continue
-    if (!map.has(f)) { map.set(f, []); orden.push(f) }
+    if (!map.has(f)) map.set(f, [])
     map.get(f)!.push(t)
+    if (t.orden !== undefined) primerOrden.set(f, Math.min(primerOrden.get(f) ?? Infinity, t.orden))
   }
+  const orden = [...map.keys()].sort((a, b) =>
+    (primerOrden.get(a) ?? Infinity) - (primerOrden.get(b) ?? Infinity) ||
+    a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' }))
   return orden.map(nombre => {
     const ts = map.get(nombre)!
     const completadas = ts.filter(t => t.estado === 'completada').length

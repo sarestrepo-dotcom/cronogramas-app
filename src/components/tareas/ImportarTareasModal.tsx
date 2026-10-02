@@ -12,7 +12,7 @@ import type { Tarea, TipoTarea, EstadoTarea } from '@/types'
 type CampoImport =
   | 'titulo' | 'fechaInicio' | 'fechaFin' | 'prioridad'
   | 'tipo' | 'responsable' | 'descripcion' | 'progreso'
-  | 'fase' | 'notas' | 'estado' | 'padre' | 'numero' | 'dependencia' | 'ignorar'
+  | 'fase' | 'notas' | 'estado' | 'padre' | 'numero' | 'dependencia' | 'entregables' | 'bloqueo' | 'ignorar'
 
 const CAMPO_LABELS: Record<CampoImport, string> = {
   titulo:      'Título',
@@ -29,12 +29,14 @@ const CAMPO_LABELS: Record<CampoImport, string> = {
   notas:       'Notas / IA',
   descripcion: 'Descripción',
   dependencia: 'Dependencia (número)',
+  entregables: 'Entregable',
+  bloqueo:     'Bloqueo (interno/cliente)',
   ignorar:     '— Ignorar',
 }
 
 const CAMPOS_ORDEN: CampoImport[] = [
   'numero', 'titulo', 'tipo', 'fase', 'padre', 'fechaInicio', 'fechaFin', 'responsable',
-  'estado', 'prioridad', 'progreso', 'dependencia', 'notas', 'descripcion', 'ignorar',
+  'estado', 'bloqueo', 'prioridad', 'progreso', 'dependencia', 'notas', 'entregables', 'descripcion', 'ignorar',
 ]
 
 // ─── FilaTarea ────────────────────────────────────────────────────────────────
@@ -53,6 +55,8 @@ interface FilaTarea {
   notas: string
   progreso: number
   dependenciaRaw: string
+  entregables: string
+  bloqueo: '' | 'interno' | 'cliente'
   valida: boolean
   error?: string
 }
@@ -109,8 +113,11 @@ const CAMPO_KEYWORDS: Record<Exclude<CampoImport, 'ignorar'>, string[]> = {
   titulo:      ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'concepto'],
   fase:        ['fase', 'phase', 'frente', 'etapa', 'sprint', 'modulo', 'categoria'],
   padre:       ['padre', 'parent', 'grupo padre', 'tarea padre', 'pertenece a', 'grupo'],
-  fechaInicio: ['inicio', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio'],
-  fechaFin:    ['fin', 'end', 'termino', 'deadline', 'vencimiento', 'hasta', 'cierre', 'entrega', 'due', 'fecha fin', 'fecha de fin'],
+  fechaInicio: ['inicio', 'inicial', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio', 'fecha inicial'],
+  // "entrega" sola NO: chocaría con la columna "Entregable"
+  fechaFin:    ['fin', 'final', 'end', 'termino', 'deadline', 'vencimiento', 'hasta', 'cierre', 'due', 'fecha fin', 'fecha de fin', 'fecha final', 'fecha entrega', 'fecha de entrega'],
+  entregables: ['entregable', 'entregables', 'resultado', 'deliverable'],
+  bloqueo:     ['bloqueo', 'tipo de bloqueo', 'bloqueado por', 'lado del bloqueo'],
   responsable: ['responsable', 'assigned', 'owner', 'assignee', 'persona', 'ejecutor', 'encargado', 'quien', 'asignado'],
   estado:      ['estado', 'status', 'estatus', 'situacion', 'estado actual'],
   prioridad:   ['prioridad', 'priority', 'urgencia', 'importancia'],
@@ -177,7 +184,7 @@ function detectarMapping(headers: string[], sep: string): Record<number, CampoIm
 function parsearConMapeo(line: string, sep: string, mapping: Record<number, CampoImport>): FilaTarea {
   const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ''))
   let titulo = '', numero = '', fase = '', padre = '', fechaInicio = '', fechaFin = ''
-  let responsable = '', descripcion = '', notas = '', dependenciaRaw = ''
+  let responsable = '', descripcion = '', notas = '', dependenciaRaw = '', entregables = '', bloqueoRaw = ''
   let prioridadRaw = '', tipoRaw = '', progresoRaw = '', estadoRaw = ''
   let hayFechaInicio = false, hayFechaFin = false
 
@@ -198,6 +205,8 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
       case 'progreso':    progresoRaw = val.replace('%', ''); break
       case 'estado':      estadoRaw = val; break
       case 'dependencia': dependenciaRaw = val.trim(); break
+      case 'entregables': entregables = val.trim(); break
+      case 'bloqueo':     bloqueoRaw = normalizar(val); break
     }
   }
 
@@ -213,7 +222,10 @@ function parsearConMapeo(line: string, sep: string, mapping: Record<number, Camp
   else if (tipo !== 'grupo' && hayFechaInicio && !validarFecha(fechaInicio)) error = 'Fecha inicio inválida'
   else if (tipo !== 'grupo' && hayFechaFin    && !validarFecha(fechaFin))    error = 'Fecha fin inválida'
 
-  return { titulo, numero, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, dependenciaRaw, valida: !error, error }
+  const bloqueo: FilaTarea['bloqueo'] =
+    /client|extern/.test(bloqueoRaw) ? 'cliente' : /intern|equipo/.test(bloqueoRaw) ? 'interno' : ''
+
+  return { titulo, numero, fase, padre, fechaInicio, fechaFin, prioridad, tipo, estado, responsable, descripcion, notas, progreso, dependenciaRaw, entregables, bloqueo, valida: !error, error }
 }
 
 // ─── Google Sheets fetcher ────────────────────────────────────────────────────
@@ -445,6 +457,8 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
           fase: f.fase.trim() || undefined,
           notas: f.notas.trim() || undefined,
           numero: f.numero || undefined,
+          entregables: f.entregables || undefined,
+          bloqueo: f.bloqueo || undefined,
           orden: i * 1000,
           proyectoId, empresaId, dependencias: [], creadoPor: uid,
         } as Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>)

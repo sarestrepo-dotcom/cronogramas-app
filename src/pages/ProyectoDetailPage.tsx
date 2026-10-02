@@ -17,9 +17,9 @@ import { useToast } from '@/components/ui/Toast'
 import { crearTarea, actualizarTarea, eliminarTarea, registrarCambio, listarPortalesPorProyecto, publicarPortales, type PortalResumen } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { calcularRutaCritica } from '@/lib/criticalPath'
-import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer } from '@/lib/utils'
+import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer, BLOQUEO_COLORS } from '@/lib/utils'
 import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
-import type { Empresa, Tarea, EstadoTarea, TipoTarea } from '@/types'
+import type { Empresa, Tarea, EstadoTarea, TipoTarea, TipoBloqueo } from '@/types'
 import { TareasTabla } from '@/components/tareas/TareasTabla'
 import { ImportarTareasModal } from '@/components/tareas/ImportarTareasModal'
 import { TareaDetailPanel } from '@/components/tareas/TareaDetailPanel'
@@ -68,6 +68,11 @@ export function ProyectoDetailPage() {
   const [selectedTarea, setSelectedTarea] = useState<Tarea | null>(null)
   const [filtroResponsable, setFiltroResponsable] = useState('')
   const [filtroGrupo, setFiltroGrupo] = useState('')
+  // Estado y bloqueo viven en la URL (?estado=bloqueada&bloqueo=cliente) para poder compartir la vista
+  const filtroEstado = (searchParams.get('estado') ?? '') as EstadoTarea | ''
+  const filtroBloqueo = (searchParams.get('bloqueo') ?? '') as TipoBloqueo | 'sin' | ''
+  const setFiltroParam = (k: 'estado' | 'bloqueo', v: string) =>
+    setSearchParams(p => { if (v) p.set(k, v); else p.delete(k); return p }, { replace: true })
   const [showProcesarEmail, setShowProcesarEmail] = useState(false)
   const [showHerramientas, setShowHerramientas] = useState(false)
   const [showEditProyecto, setShowEditProyecto] = useState(false)
@@ -170,8 +175,24 @@ export function ProyectoDetailPage() {
     tareasActivas.filter(t => t.estado !== 'completada' && !isVencida(t.fechaFin) && isProximaAVencer(t.fechaFin, 3)).length, [tareasActivas])
 
   const filteredTareas = useMemo(() => {
-    if (!filtroResponsable && !filtroGrupo) return enrichedTareas
-    return enrichedTareas.filter(t => {
+    if (!filtroResponsable && !filtroGrupo && !filtroEstado && !filtroBloqueo) return enrichedTareas
+    // Estado/bloqueo se evalúan en tareas (no grupos); se conservan los grupos ancestros para
+    // que la jerarquía se siga viendo
+    let base = enrichedTareas
+    if (filtroEstado || filtroBloqueo) {
+      const porId = new Map(enrichedTareas.map(t => [t.id, t]))
+      const visibles = new Set<string>()
+      for (const t of enrichedTareas) {
+        if (t.tipo === 'grupo') continue
+        if (filtroEstado && t.estado !== filtroEstado) continue
+        if (filtroBloqueo && (t.estado !== 'bloqueada' || (filtroBloqueo === 'sin' ? !!t.bloqueo : t.bloqueo !== filtroBloqueo))) continue
+        visibles.add(t.id)
+        let p = t.parentId ? porId.get(t.parentId) : undefined
+        for (let i = 0; p && i < 50; i++) { visibles.add(p.id); p = p.parentId ? porId.get(p.parentId) : undefined }
+      }
+      base = enrichedTareas.filter(t => visibles.has(t.id))
+    }
+    return base.filter(t => {
       if (filtroResponsable) {
         const todos = t.asignadosA?.length ? t.asignadosA : (t.asignadoA ? [t.asignadoA] : [])
         if (!todos.includes(filtroResponsable)) return false
@@ -182,9 +203,9 @@ export function ProyectoDetailPage() {
       }
       return true
     })
-  }, [enrichedTareas, filtroResponsable, filtroGrupo])
+  }, [enrichedTareas, filtroResponsable, filtroGrupo, filtroEstado, filtroBloqueo])
 
-  const hasFilters = filtroResponsable || filtroGrupo
+  const hasFilters = filtroResponsable || filtroGrupo || filtroEstado || filtroBloqueo
 
   useEffect(() => {
     if (empresa) setEmpresaActiva(empresa)
@@ -418,7 +439,7 @@ export function ProyectoDetailPage() {
       </div>
 
       {/* Filter bar (cronograma only) */}
-      {topTab === 'cronograma' && vista !== 'carga' && (responsables.length > 0 || grupos.length > 0) && (
+      {topTab === 'cronograma' && tareas.length > 0 && (
         <div className="flex items-center gap-3 px-6 py-2 border-b border-slate-100 bg-white flex-shrink-0 flex-wrap">
           <Filter size={13} className="text-slate-400" />
           <select value={filtroResponsable} onChange={e => setFiltroResponsable(e.target.value)}
@@ -431,8 +452,20 @@ export function ProyectoDetailPage() {
             <option value="">Todos los grupos</option>
             {grupos.map(g => <option key={g.id} value={g.id}>{g.titulo}</option>)}
           </select>
+          <select value={filtroEstado} onChange={e => setFiltroParam('estado', e.target.value)}
+            className={cn('text-sm border rounded-xl px-3 py-1.5 bg-white', filtroEstado ? 'border-indigo-300 text-indigo-700' : 'border-slate-200 text-slate-600')}>
+            <option value="">Todos los estados</option>
+            {(['pendiente', 'en_progreso', 'completada', 'bloqueada'] as EstadoTarea[]).map(e => <option key={e} value={e}>{ESTADO_LABELS[e]}</option>)}
+          </select>
+          <select value={filtroBloqueo} onChange={e => setFiltroParam('bloqueo', e.target.value)}
+            className={cn('text-sm border rounded-xl px-3 py-1.5 bg-white', filtroBloqueo ? 'border-indigo-300 text-indigo-700' : 'border-slate-200 text-slate-600')}>
+            <option value="">Todos los bloqueos</option>
+            <option value="interno">Bloqueo interno</option>
+            <option value="cliente">Bloqueo del cliente</option>
+            <option value="sin">Bloqueadas sin clasificar</option>
+          </select>
           {hasFilters && (
-            <button onClick={() => { setFiltroResponsable(''); setFiltroGrupo('') }}
+            <button onClick={() => { setFiltroResponsable(''); setFiltroGrupo(''); setSearchParams(p => { p.delete('estado'); p.delete('bloqueo'); return p }, { replace: true }) }}
               className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-lg transition-colors">
               <X size={11} /> Limpiar
             </button>
@@ -452,7 +485,7 @@ export function ProyectoDetailPage() {
             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : vista === 'carga' ? (
-          <WorkloadView tareas={enrichedTareas} />
+          <WorkloadView tareas={filteredTareas} />
         ) : tareas.length === 0 && vista !== 'tabla' ? (
           <EmptyTareas onNew={() => setShowModal(true)} onImport={() => setShowImport(true)} />
         ) : vista === 'tabla' ? (
@@ -890,6 +923,7 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
   const [newLink, setNewLink] = useState('')
   const [fase, setFase] = useState(tarea?.fase ?? '')
   const [notas, setNotas] = useState(tarea?.notas ?? '')
+  const [bloqueo, setBloqueo] = useState<TipoBloqueo | ''>(tarea?.bloqueo ?? '')
   const [saving, setSaving] = useState(false)
 
   const fasesExistentes = [...new Set(tareas.map(t => t.fase).filter(Boolean) as string[])].sort()
@@ -925,10 +959,15 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
         links: links.filter(l => l.trim()),
         fase: fase.trim() || undefined,
         notas: notas.trim() || undefined,
+        ...(estado === 'bloqueada' && bloqueo ? { bloqueo } : {}),
       }
       if (tarea) {
         const update: Record<string, unknown> = { ...data }
         if (!parentId && tarea.parentId) update.parentId = deleteField()
+        // Campos vaciados en el formulario: borrarlos (undefined se ignoraría y volvería el valor anterior)
+        for (const k of ['notas', 'fase', 'asignadoA', 'asignadosA', 'bloqueo'] as const) {
+          if (update[k] === undefined && tarea[k] !== undefined) update[k] = deleteField()
+        }
         await actualizarTarea(tarea.id, update as Partial<Tarea>)
         const updates = await aplicarCascada(tareas, tarea.id, ffDate)
         if (updates.length > 0) onCascade?.(updates.length)
@@ -1081,9 +1120,23 @@ function TareaModal({ tarea, proyectoId, empresaId, uid, tareas, onClose, onCasc
             </FormField>
           )}
 
-          <FormField label="Notas / IA (opcional)">
+          {estado === 'bloqueada' && (
+            <FormField label="Bloqueo — ¿de quién depende?">
+              <div className="flex gap-2">
+                {([['interno', 'Interno (equipo)'], ['cliente', 'Cliente']] as [TipoBloqueo, string][]).map(([v, label]) => (
+                  <button type="button" key={v} onClick={() => setBloqueo(bloqueo === v ? '' : v)}
+                    className={cn('flex-1 px-3 py-2 rounded-xl text-sm font-medium border transition-colors',
+                      bloqueo === v ? cn(BLOQUEO_COLORS[v].bg, BLOQUEO_COLORS[v].text, 'border-transparent') : 'border-slate-200 text-slate-600 hover:bg-slate-50')}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </FormField>
+          )}
+
+          <FormField label={estado === 'bloqueada' ? 'Notas — motivo del bloqueo (lo ve el cliente en el portal)' : 'Notas / IA (opcional)'}>
             <textarea className="input-base resize-none" rows={2} value={notas} onChange={(e) => setNotas(e.target.value)}
-              placeholder="Notas internas, contexto de IA, acuerdos..." />
+              placeholder={estado === 'bloqueada' ? '¿Qué falta para desbloquear esta tarea?' : 'Notas internas, contexto de IA, acuerdos...'} />
           </FormField>
 
           <FormField label="Links y entregables (opcional)">

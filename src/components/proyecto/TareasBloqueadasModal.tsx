@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { X, Ban, Copy, Check, ArrowRight, StickyNote } from 'lucide-react'
-import { cn, formatFecha, isVencida, diasRestantes, PRIORIDAD_COLORS } from '@/lib/utils'
+import { cn, formatFecha, isVencida, diasRestantes, PRIORIDAD_COLORS, BLOQUEO_LABELS, BLOQUEO_COLORS } from '@/lib/utils'
 import type { Tarea } from '@/types'
 
 const PRIORIDAD_LABELS = { baja: 'Baja', media: 'Media', alta: 'Alta', critica: 'Crítica' }
@@ -19,6 +19,7 @@ function responsablesDe(t: Tarea): string {
 
 export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirTarea }: Props) {
   const [copiado, setCopiado] = useState(false)
+  const [lado, setLado] = useState<'todos' | 'interno' | 'cliente' | 'sin'>('todos')
   const grupoDe = (t: Tarea) => allTareas.find(g => g.id === t.parentId && g.tipo === 'grupo')?.titulo ?? t.fase
 
   useEffect(() => {
@@ -27,7 +28,15 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const ordenadas = [...bloqueadas].sort((a, b) => (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
+  const conteo = {
+    todos: bloqueadas.length,
+    interno: bloqueadas.filter(t => t.bloqueo === 'interno').length,
+    cliente: bloqueadas.filter(t => t.bloqueo === 'cliente').length,
+    sin: bloqueadas.filter(t => !t.bloqueo).length,
+  }
+  const ordenadas = bloqueadas
+    .filter(t => lado === 'todos' || (lado === 'sin' ? !t.bloqueo : t.bloqueo === lado))
+    .sort((a, b) => (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
   const sinMotivo = ordenadas.filter(t => !t.notas?.trim()).length
 
   const copiarResumen = async () => {
@@ -36,7 +45,7 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
       '',
       ...ordenadas.flatMap(t => [
         `⛔ ${t.titulo}${grupoDe(t) ? ` — ${grupoDe(t)}` : ''}`,
-        `   Responsable: ${responsablesDe(t) || 'Sin asignar'} · Entrega: ${formatFecha(t.fechaFin)}`,
+        `   Bloqueo: ${t.bloqueo ? BLOQUEO_LABELS[t.bloqueo] : 'Sin clasificar'} · Responsable: ${responsablesDe(t) || 'Sin asignar'} · Entrega: ${formatFecha(t.fechaFin)}`,
         `   Motivo: ${t.notas?.trim() || 'Sin motivo registrado'}`,
         '',
       ]),
@@ -78,6 +87,17 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
           </div>
         </div>
 
+        {/* Interno / cliente */}
+        <div className="px-6 pt-4 flex items-center gap-2 flex-wrap">
+          {([['todos', 'Todos'], ['cliente', 'Del cliente'], ['interno', 'Internos'], ['sin', 'Sin clasificar']] as const).map(([v, label]) => (
+            <button key={v} onClick={() => setLado(v)}
+              className={cn('px-3 py-1 rounded-lg text-xs font-medium transition-colors',
+                lado === v ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
+              {label} ({conteo[v]})
+            </button>
+          ))}
+        </div>
+
         {/* Lista */}
         <div className="overflow-y-auto p-6 space-y-3">
           {ordenadas.length === 0 ? (
@@ -103,6 +123,9 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
                 </div>
 
                 <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-2 text-xs text-slate-500">
+                  {t.bloqueo
+                    ? <span className={cn('px-1.5 py-0.5 rounded-md font-semibold', BLOQUEO_COLORS[t.bloqueo].bg, BLOQUEO_COLORS[t.bloqueo].text)}>Bloqueo {BLOQUEO_LABELS[t.bloqueo].toLowerCase()}</span>
+                    : <span className="px-1.5 py-0.5 rounded-md font-medium bg-slate-100 text-slate-500">Sin clasificar</span>}
                   <span>👤 {responsablesDe(t) || 'Sin asignar'}</span>
                   <span className={cn(venc && 'text-red-600 font-semibold')}>
                     📅 {formatFecha(t.fechaFin)}{venc ? ` · ${Math.abs(dias)} día${Math.abs(dias) === 1 ? '' : 's'} de atraso` : ''}

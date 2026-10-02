@@ -711,6 +711,7 @@ export function construirDatosPortal(p: Proyecto, tareas: Tarea[]): DatosPortal 
       fechaFin: t.fechaFin ?? null,
       // Las notas solo se publican como motivo de bloqueo
       notas: t.estado === 'bloqueada' ? (t.notas ?? null) : null,
+      bloqueo: t.estado === 'bloqueada' ? (t.bloqueo ?? null) : null,
     }) as unknown as Tarea),
   }
 }

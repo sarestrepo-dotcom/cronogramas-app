@@ -259,8 +259,11 @@ const KEYWORDS = {
   titulo: ['titulo', 'tarea', 'subtarea', 'task', 'nombre', 'name', 'actividad', 'activity', 'concepto'],
   fase: ['fase', 'phase', 'frente', 'etapa', 'sprint', 'modulo', 'categoria'],
   padre: ['padre', 'parent', 'grupo padre', 'tarea padre', 'pertenece a', 'grupo'],
-  fechaInicio: ['inicio', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio'],
-  fechaFin: ['fin', 'end', 'termino', 'deadline', 'vencimiento', 'hasta', 'cierre', 'entrega', 'due', 'fecha fin', 'fecha de fin'],
+  fechaInicio: ['inicio', 'inicial', 'start', 'begin', 'comienzo', 'arranque', 'desde', 'from', 'fecha inicio', 'fecha de inicio', 'fecha inicial'],
+  // "entrega" sola NO: chocaría con la columna "Entregable"
+  fechaFin: ['fin', 'final', 'end', 'termino', 'deadline', 'vencimiento', 'hasta', 'cierre', 'due', 'fecha fin', 'fecha de fin', 'fecha final', 'fecha entrega', 'fecha de entrega'],
+  entregables: ['entregable', 'entregables', 'resultado', 'deliverable'],
+  bloqueo: ['bloqueo', 'tipo de bloqueo', 'bloqueado por', 'lado del bloqueo'],
   responsable: ['responsable', 'assigned', 'owner', 'assignee', 'persona', 'ejecutor', 'encargado', 'quien', 'asignado'],
   estado: ['estado', 'status', 'estatus', 'situacion', 'estado actual'],
   prioridad: ['prioridad', 'priority', 'urgencia', 'importancia'],
@@ -365,6 +368,15 @@ function parsearFecha(v, tz, finDeDia) {
   return local.toISOString()
 }
 
+// "Cliente", "Del cliente", "Externo" → cliente · "Interno", "Equipo" → interno
+function parsearBloqueo(v) {
+  const n = normalizar(v)
+  if (!n) return ''
+  if (n.indexOf('client') >= 0 || n.indexOf('extern') >= 0) return 'cliente'
+  if (n.indexOf('intern') >= 0 || n.indexOf('equipo') >= 0) return 'interno'
+  return ''
+}
+
 function parsearFila(row, cols, tz, id, indice) {
   const numero = String(celda(row, cols, 'numero')).trim()
   const padre = String(celda(row, cols, 'padre')).trim()
@@ -392,6 +404,8 @@ function parsearFila(row, cols, tz, id, indice) {
     descripcion: String(celda(row, cols, 'descripcion')).trim(),
     notas: String(celda(row, cols, 'notas')).trim(),
     estado: estado,
+    entregables: String(celda(row, cols, 'entregables')).trim(),
+    bloqueo: parsearBloqueo(celda(row, cols, 'bloqueo')),
     prioridad: PRIORIDADES[normalizar(celda(row, cols, 'prioridad'))] || 'media',
     progreso: progreso,
     // Sin fechas en la hoja (p. ej. grupos): se conservan las de la tarea (null = no tocar)
@@ -438,6 +452,8 @@ function camposGestionados(cols) {
   if (cols.fase !== undefined) campos.push('fase')
   if (cols.descripcion !== undefined) campos.push('descripcion')
   if (cols.notas !== undefined) campos.push('notas')
+  if (cols.entregables !== undefined) campos.push('entregables')
+  if (cols.bloqueo !== undefined) campos.push('bloqueo')
   if (cols.prioridad !== undefined) campos.push('prioridad')
   if (cols.responsable !== undefined) campos.push('asignadoA', 'asignadosA')
   if (cols.dependencia !== undefined) campos.push('dependencias')
@@ -461,6 +477,8 @@ function aFirestore(f, campos) {
   set('fase', s(f.fase))
   set('descripcion', s(f.descripcion))
   set('notas', s(f.notas))
+  set('entregables', s(f.entregables))
+  set('bloqueo', s(f.bloqueo))
   set('prioridad', { stringValue: f.prioridad })
   set('asignadoA', s(f.responsables[0]))
   set('asignadosA', f.responsables.length ? { arrayValue: { values: f.responsables.map(function (r) { return { stringValue: r } }) } } : undefined)
@@ -524,6 +542,7 @@ function publicarPortales(proyectoId) {
       fechaInicio: copiar(t.fechaInicio),
       fechaFin: copiar(t.fechaFin),
       notas: bloqueada ? copiar(t.notas) : nul,
+      bloqueo: bloqueada ? copiar(t.bloqueo) : nul,
     } } }
   })
   const duenos = Object.keys((pf.miembros && pf.miembros.mapValue && pf.miembros.mapValue.fields) || {})

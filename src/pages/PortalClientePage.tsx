@@ -237,6 +237,12 @@ export function PortalClientePage() {
                       <div className="min-w-0">
                         {grupo && <p className="text-[11px] text-slate-400 font-medium truncate">▶ {grupo}</p>}
                         <p className="text-sm font-medium text-slate-800">{t.tipo === 'hito' ? '◆ ' : ''}{t.titulo}</p>
+                        {t.bloqueo === 'cliente' && (
+                          <span className="inline-block mt-1 text-[11px] font-semibold bg-amber-100 text-amber-800 rounded-md px-1.5 py-0.5">Requiere acción de su parte</span>
+                        )}
+                        {t.bloqueo === 'interno' && (
+                          <span className="inline-block mt-1 text-[11px] font-semibold bg-violet-100 text-violet-700 rounded-md px-1.5 py-0.5">En gestión del equipo</span>
+                        )}
                       </div>
                       <span className={cn('text-xs flex-shrink-0', venc ? 'text-red-500 font-semibold' : 'text-slate-400')}>
                         {formatFecha(t.fechaFin)}

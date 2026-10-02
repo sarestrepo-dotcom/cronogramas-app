@@ -49,6 +49,12 @@ export const ESTADO_LABELS: Record<EstadoTarea, string> = {
   bloqueada:   'Bloqueada',
 }
 
+export const BLOQUEO_LABELS = { interno: 'Interno', cliente: 'Cliente' } as const
+export const BLOQUEO_COLORS = {
+  interno: { bg: 'bg-violet-100', text: 'text-violet-700' },
+  cliente: { bg: 'bg-amber-100', text: 'text-amber-800' },
+} as const
+
 export const PRIORIDAD_COLORS = {
   baja:    { bg: 'bg-slate-100', text: 'text-slate-600' },
   media:   { bg: 'bg-yellow-100', text: 'text-yellow-700' },

@@ -370,6 +370,16 @@ pruebas antes de cada deploy de reglas.** Principios:
 - **Grupo** = tarea `tipo: 'grupo'` con subtareas (`parentId`); avance/fechas derivados (enrichTareas).
 - **Numeración**: `tarea.numero` (del Sheet/importación) se muestra tal cual; si falta, `computeNumeros` la calcula.
 - Dashboard → "Avance por fase" (default) o "Grupos" (toggle). La fase de una tarea hereda la de su ancestro.
+  Orden de fases = orden de aparición (`orden`), con fallback por nombre natural (Fase 2 < Fase 10).
+
+### Bloqueos y filtros
+- `tarea.bloqueo`: `'interno' | 'cliente'` (solo relevante si `estado === 'bloqueada'`). Columna "Bloqueo" del
+  Sheet/importador. Se ve en el modal de bloqueadas (pestañas), el panel de tarea y el portal
+  ("Requiere acción de su parte" / "En gestión del equipo").
+- Filtros de todas las vistas del cronograma: responsable, grupo, `?estado=` y `?bloqueo=interno|cliente|sin`
+  (en la URL). Estado/bloqueo filtran tareas y conservan los grupos ancestros.
+- Detección de columnas: "entrega" NO es palabra clave de fecha fin (chocaba con "Entregable");
+  "Fecha Inicial/Final" sí se reconocen. Mantener alineados importador y script de Sheets.
 
 ### enrichTareas (`hierarchyUtils.ts`)
 Función crítica que procesa las tareas antes de mostrarlas. Es recursiva con memoización (bottom-up):

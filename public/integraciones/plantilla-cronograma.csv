@@ -1,10 +1,10 @@
-N°,Fase,Tipo,Tarea,Responsable,Fecha inicio,Fecha fin,Estado,Avance,Dependencia,Notas
-1,Fase 1 · Kickoff,tarea,Proyecto en COR,Eduardo Herrera,01/10/2026,01/10/2026,Completada,100%,,
-2,Fase 1 · Kickoff,tarea,Activación de cliente,Eduardo Herrera,01/10/2026,02/10/2026,Completada,100%,1,
-3,Fase 1 · Kickoff,grupo,Preparación del kickoff,,,,,,,Grupo: su avance y fechas salen de sus subtareas 3.x
-3.1,Fase 1 · Kickoff,tarea,Carpeta en Drive,Eduardo Herrera,02/10/2026,02/10/2026,Completada,100%,,
-3.2,Fase 1 · Kickoff,tarea,"Presentación ""Kick off""",Eduardo Herrera,02/10/2026,05/10/2026,En progreso,50%,3.1,
-3.3,Fase 1 · Kickoff,hito,Kickoff con cliente,Eduardo Herrera,06/10/2026,06/10/2026,Pendiente,0%,3.2,
-4,Fase 1 · Kickoff,tarea,Recopilación de información,Eduardo Herrera,06/10/2026,10/10/2026,Bloqueada,20%,3.3,Esperando accesos del cliente (este texto lo ve el cliente)
-5,Fase 2 · Diseño de sitio,tarea,Wireframes,Diseñador,13/10/2026,17/10/2026,Pendiente,0%,4,
-6,Fase 2 · Diseño de sitio,hito,Aprobación de diseño,Eduardo Herrera,20/10/2026,20/10/2026,Pendiente,0%,5,
+N°,Fase,Tipo,Tarea,Responsable,Fecha inicio,Fecha fin,Estado,Bloqueo,Avance,Dependencia,Notas
+1,Fase 1 · Kickoff,tarea,Proyecto en COR,Eduardo Herrera,01/10/2026,01/10/2026,Completada,,100%,,
+2,Fase 1 · Kickoff,tarea,Activación de cliente,Eduardo Herrera,01/10/2026,02/10/2026,Completada,,100%,1,
+3,Fase 1 · Kickoff,grupo,Preparación del kickoff,,,,,,,,Grupo: su avance y fechas salen de sus subtareas 3.x
+3.1,Fase 1 · Kickoff,tarea,Carpeta en Drive,Eduardo Herrera,02/10/2026,02/10/2026,Completada,,100%,,
+3.2,Fase 1 · Kickoff,tarea,"Presentación ""Kick off""",Eduardo Herrera,02/10/2026,05/10/2026,En progreso,,50%,3.1,
+3.3,Fase 1 · Kickoff,hito,Kickoff con cliente,Eduardo Herrera,06/10/2026,06/10/2026,Pendiente,,0%,3.2,
+4,Fase 1 · Kickoff,tarea,Recopilación de información,Eduardo Herrera,06/10/2026,10/10/2026,Bloqueada,Cliente,20%,3.3,Esperando accesos del cliente (este texto lo ve el cliente)
+5,Fase 2 · Diseño de sitio,tarea,Wireframes,Diseñador,13/10/2026,17/10/2026,Pendiente,,0%,4,
+6,Fase 2 · Diseño de sitio,hito,Aprobación de diseño,Eduardo Herrera,20/10/2026,20/10/2026,Pendiente,,0%,5,

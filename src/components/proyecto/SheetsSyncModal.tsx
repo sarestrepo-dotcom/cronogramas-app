@@ -18,6 +18,7 @@ const ESTRUCTURA: Array<[string, string]> = [
   ['Responsable', 'Uno o varios separados por coma'],
   ['Fecha inicio / Fecha fin', 'dd/mm/aaaa o celdas de fecha. Los grupos pueden ir sin fechas'],
   ['Estado', 'Pendiente, En progreso, Completada o Bloqueada'],
+  ['Bloqueo', 'Si está bloqueada: Interno (depende del equipo) o Cliente (depende del cliente). Sirve para filtrar'],
   ['Avance', '0–100 o %'],
   ['Dependencia', 'N° de la tarea de la que depende (varias separadas por coma)'],
   ['Notas', 'Si la tarea está bloqueada, explica el motivo aquí: es lo que verá el cliente en el portal'],

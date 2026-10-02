@@ -6,6 +6,8 @@ export type EstadoTarea = 'pendiente' | 'en_progreso' | 'completada' | 'bloquead
 
 export type TipoTarea = 'tarea' | 'hito' | 'grupo'
 
+export type TipoBloqueo = 'interno' | 'cliente'
+
 export interface Empresa {
   id: string
   nombre: string
@@ -68,6 +70,7 @@ export interface Tarea {
   entregables?: string     // deliverables / output description
   origen?: 'sheets'        // creada/gestionada desde un Google Sheet vinculado
   numero?: string          // numeración propia (Sheet/importación); si falta se calcula sola
+  bloqueo?: TipoBloqueo    // de quién depende desbloquear una tarea bloqueada
   creadoPor: string
   creadoEn: Timestamp
   actualizadoEn: Timestamp
