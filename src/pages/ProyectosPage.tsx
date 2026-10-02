@@ -115,6 +115,7 @@ export function ProyectosPage() {
           empresa={empresa}
           uid={user!.uid}
           clientes={clientes}
+          proyectosDisponibles={todosProyectos}
           clienteId={esSinCliente ? undefined : clienteId}
           onClose={() => setShowModal(false)}
           onCreate={(id) => { setShowModal(false); navigate(`/empresa/${empresaId}/cliente/${clienteId}/proyecto/${id}`) }}
@@ -126,6 +127,7 @@ export function ProyectosPage() {
           empresa={empresa}
           uid={user!.uid}
           clientes={clientes}
+          proyectosDisponibles={todosProyectos}
           proyecto={editingProyecto}
           onClose={() => setEditingProyecto(null)}
           onSave={() => setEditingProyecto(null)}
@@ -223,8 +225,10 @@ function ProyectoCard({ proyecto, puedoCompartir, puedoEditar, menuOpen, onMenuT
   )
 }
 
-export function ProyectoModal({ empresa, uid, proyecto, clienteId: clienteIdProp, clientes = [], onClose, onCreate, onSave }: {
+export function ProyectoModal({ empresa, uid, proyecto, clienteId: clienteIdProp, clientes = [], proyectosDisponibles = [], onClose, onCreate, onSave }: {
   empresa: Empresa
+  /** Proyectos de la empresa que pueden componer un proyecto global */
+  proyectosDisponibles?: Proyecto[]
   uid: string
   proyecto?: Proyecto
   clienteId?: string
@@ -248,6 +252,10 @@ export function ProyectoModal({ empresa, uid, proyecto, clienteId: clienteIdProp
   const [fechaFin, setFechaFin] = useState(tsToStr(proyecto?.fechaFin, ''))
   const [valorVenta, setValorVenta] = useState(proyecto?.valorVenta?.toString() ?? '')
   const [selectedClienteId, setSelectedClienteId] = useState(proyecto?.clienteId ?? clienteIdProp ?? '')
+  const [subproyectos, setSubproyectos] = useState<string[]>(proyecto?.subproyectos ?? [])
+  const [esGlobal, setEsGlobal] = useState((proyecto?.subproyectos?.length ?? 0) > 0)
+  // Un proyecto global no puede contener a otro global ni a sí mismo
+  const candidatos = proyectosDisponibles.filter(p => p.id !== proyecto?.id && !(p.subproyectos?.length) && p.estado !== 'archivado')
   const [saving, setSaving] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -268,6 +276,7 @@ export function ProyectoModal({ empresa, uid, proyecto, clienteId: clienteIdProp
         fechaFin: Timestamp.fromDate(ffDate),
         valorVenta: valorVenta ? Number(valorVenta) : undefined,
         clienteId: selectedClienteId || undefined,
+        subproyectos: esGlobal ? subproyectos : [],
       }
       if (isEdit && proyecto) {
         await actualizarProyecto(proyecto.id, data)
@@ -323,6 +332,28 @@ export function ProyectoModal({ empresa, uid, proyecto, clienteId: clienteIdProp
             <input className="input-base" type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} min={fechaInicio} required />
           </FormField>
         </div>
+        {candidatos.length > 0 && (
+          <div className="rounded-xl border border-slate-200 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+              <input type="checkbox" className="accent-indigo-600" checked={esGlobal} onChange={e => setEsGlobal(e.target.checked)} />
+              Proyecto global (se alimenta de otros proyectos)
+            </label>
+            {esGlobal && (
+              <>
+                <p className="text-xs text-slate-500">Elige los proyectos que lo componen. Su cronograma y dashboard mostrarán todas sus tareas juntas.</p>
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {candidatos.map(p => (
+                    <label key={p.id} className="flex items-center gap-2 text-sm text-slate-700 px-2 py-1 rounded-lg hover:bg-slate-50 cursor-pointer">
+                      <input type="checkbox" className="accent-indigo-600" checked={subproyectos.includes(p.id)}
+                        onChange={() => setSubproyectos(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])} />
+                      {p.nombre}
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {isEdit && (
           <FormField label="Estado">
             <select className="input-base" value={estado} onChange={(e) => setEstado(e.target.value as Proyecto['estado'])}>

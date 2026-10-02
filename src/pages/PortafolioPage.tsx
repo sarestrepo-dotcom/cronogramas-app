@@ -106,7 +106,8 @@ function SaludTab({ proyectos, tareas, clientes, empresas }: { proyectos: Proyec
     tareas.forEach(t => { if (!porProyecto.has(t.proyectoId)) porProyecto.set(t.proyectoId, []); porProyecto.get(t.proyectoId)!.push(t) })
     return proyectos
       .filter(p => verTodos || p.estado === 'activo')
-      .map(p => ({ p, salud: calcularSalud(porProyecto.get(p.id) ?? []) }))
+      // Proyecto global: su salud sale de las tareas propias + las de sus subproyectos
+      .map(p => ({ p, salud: calcularSalud([p.id, ...(p.subproyectos ?? [])].flatMap(id => porProyecto.get(id) ?? [])) }))
       .sort((a, b) => ORDEN_SEMAFORO[a.salud.semaforo] - ORDEN_SEMAFORO[b.salud.semaforo] || a.salud.diferencia - b.salud.diferencia)
   }, [proyectos, tareas, verTodos])
 
@@ -157,7 +158,7 @@ function SaludTab({ proyectos, tareas, clientes, empresas }: { proyectos: Proyec
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <p className="font-medium text-slate-800">{p.nombre}</p>
+                    <p className="font-medium text-slate-800">{p.nombre}{p.subproyectos?.length ? <span className="ml-1.5 text-[10px] font-semibold text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">GLOBAL · {p.subproyectos.length}</span> : null}</p>
                     <p className="text-[11px] text-slate-400">{[cliente, empresa].filter(Boolean).join(' · ')}</p>
                     <p className="text-[11px] text-slate-500">{salud.motivo}</p>
                   </td>

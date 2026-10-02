@@ -25,10 +25,12 @@ interface Props {
   /** Para el resumen al cliente (no se muestra como título) */
   nombreParaCliente?: string
   portalUrl?: string
+  /** Proyecto global: nombre de cada proyecto que lo compone (habilita la vista "Proyectos") */
+  nombresProyectos?: Record<string, string>
   onAbrirTarea?: (t: Tarea) => void
 }
 
-export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, nombreParaCliente, portalUrl, onAbrirTarea }: Props) {
+export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, nombreParaCliente, portalUrl, nombresProyectos, onAbrirTarea }: Props) {
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = (searchParams.get('dash') as DashTab | null) ?? 'resumen'
   const setTab = (t: DashTab) =>
@@ -122,7 +124,7 @@ export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, nombrePa
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {tab === 'resumen'
-          ? <ResumenEjecutivo tareas={filtered} allTareas={tareas} proyectoNombre={proyectoNombre} proyectoId={proyectoId} onAbrirTarea={onAbrirTarea} />
+          ? <ResumenEjecutivo tareas={filtered} allTareas={tareas} proyectoNombre={proyectoNombre} proyectoId={proyectoId} nombresProyectos={nombresProyectos} onAbrirTarea={onAbrirTarea} />
           : <VistaSemanal tareas={filtered} allTareas={tareas} />
         }
       </div>
@@ -141,8 +143,9 @@ export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, nombrePa
 
 // ─── Resumen ejecutivo ────────────────────────────────────────────────────────
 
-function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbrirTarea }: {
-  tareas: Tarea[]; allTareas: Tarea[]; proyectoNombre?: string; proyectoId?: string; onAbrirTarea?: (t: Tarea) => void
+function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, nombresProyectos, onAbrirTarea }: {
+  tareas: Tarea[]; allTareas: Tarea[]; proyectoNombre?: string; proyectoId?: string
+  nombresProyectos?: Record<string, string>; onAbrirTarea?: (t: Tarea) => void
 }) {
   const [showBloqueadas, setShowBloqueadas] = useState(false)
   const nonGrupo = tareas.filter(t => t.tipo !== 'grupo')
@@ -155,9 +158,12 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
   const globalPct   = total > 0 ? Math.round(nonGrupo.reduce((s, t) => s + (t.progreso ?? 0), 0) / total) : 0
 
   const grupos = allTareas.filter(t => t.tipo === 'grupo')
-  const [vistaAvance, setVistaAvance] = useState<'fases' | 'grupos' | 'sprints'>('fases')
+  const [vistaAvance, setVistaAvance] = useState<'fases' | 'grupos' | 'sprints' | 'proyectos'>(nombresProyectos ? 'proyectos' : 'fases')
   const fases = useMemo(() => calcularAvancePorFase(nonGrupo, allTareas), [nonGrupo, allTareas])
   const sprints = useMemo(() => calcularAvancePorFase(nonGrupo, allTareas, t => t.sprint?.trim() ?? '', false), [nonGrupo, allTareas])
+  const porProyecto = useMemo(() => nombresProyectos
+    ? calcularAvancePorFase(nonGrupo, allTareas, t => nombresProyectos[t.proyectoId] ?? '', false)
+    : [], [nonGrupo, allTareas, nombresProyectos])
   const hitos  = tareas.filter(t => t.tipo === 'hito').sort((a, b) =>
     (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
 
@@ -197,14 +203,14 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
       </div>
 
       {/* Avance por fase (franjas moradas) o por grupo (▶ tareas contenedoras) */}
-      {(fases.length > 0 || grupos.length > 0 || sprints.length > 0) && (
+      {(fases.length > 0 || grupos.length > 0 || sprints.length > 0 || porProyecto.length > 0) && (
         <div>
           <div className="flex items-center justify-between mb-3 gap-3">
             <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">
-              {vistaAvance === 'fases' ? 'Avance por fase' : vistaAvance === 'sprints' ? 'Avance por sprint' : 'Avance por grupo'}
+              {({ fases: 'Avance por fase', sprints: 'Avance por sprint', grupos: 'Avance por grupo', proyectos: 'Avance por proyecto' })[vistaAvance]}
             </h3>
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
-              {([['fases', `Fases (${fases.length})`], ['grupos', `Grupos (${grupos.length})`], ...(sprints.length ? [['sprints', `Sprints (${sprints.length})`]] : [])] as Array<[typeof vistaAvance, string]>).map(([v, label]) => (
+              {([...(porProyecto.length ? [['proyectos', `Proyectos (${porProyecto.length})`]] : []), ['fases', `Fases (${fases.length})`], ['grupos', `Grupos (${grupos.length})`], ...(sprints.length ? [['sprints', `Sprints (${sprints.length})`]] : [])] as Array<[typeof vistaAvance, string]>).map(([v, label]) => (
                 <button key={v} onClick={() => setVistaAvance(v)}
                   className={cn('px-3 py-1 rounded-md text-xs font-medium transition-colors',
                     vistaAvance === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
@@ -213,7 +219,7 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
               ))}
             </div>
           </div>
-          {(vistaAvance === 'fases' ? fases : vistaAvance === 'sprints' ? sprints : grupos).length === 0 ? (
+          {(vistaAvance === 'fases' ? fases : vistaAvance === 'sprints' ? sprints : vistaAvance === 'proyectos' ? porProyecto : grupos).length === 0 ? (
             <p className="text-sm text-slate-400 bg-white rounded-xl border border-dashed border-slate-200 p-4 text-center">
               {vistaAvance === 'fases'
                 ? 'Ninguna tarea tiene Fase asignada.'
@@ -222,7 +228,7 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbr
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {(vistaAvance !== 'grupos'
-              ? (vistaAvance === 'fases' ? fases : sprints).map(f => ({ key: f.nombre, titulo: f.nombre, icono: '', progreso: f.progreso, estado: f.estado, detalle: `${f.completadas}/${f.total} tareas completadas` }))
+              ? (vistaAvance === 'fases' ? fases : vistaAvance === 'proyectos' ? porProyecto : sprints).map(f => ({ key: f.nombre, titulo: f.nombre, icono: '', progreso: f.progreso, estado: f.estado, detalle: `${f.completadas}/${f.total} tareas completadas` }))
               : grupos.map(g => ({ key: g.id, titulo: g.titulo, icono: '▶ ', progreso: g.progreso ?? 0, estado: g.estado, detalle: '' }))
             ).map(c => (
               <div key={c.key} className="bg-white rounded-xl border border-slate-200 p-4">

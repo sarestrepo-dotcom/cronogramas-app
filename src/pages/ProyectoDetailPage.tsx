@@ -5,7 +5,7 @@ import {
   Plus, List, BarChart2, Table2, ArrowLeft, Circle, CheckCircle2,
   Clock, MoreVertical, Trash2, Pencil, Upload, ChevronDown, ChevronRight,
   LayoutDashboard, Columns3, Link2, X, Filter, Printer, LayoutTemplate,
-  Users, AlertTriangle, RotateCcw, Settings2, Mail, Sheet,
+  Users, AlertTriangle, RotateCcw, Settings2, Mail, Sheet, Layers,
 } from 'lucide-react'
 import { useEmpresas } from '@/hooks/useEmpresas'
 import { useTareas } from '@/hooks/useTareas'
@@ -14,7 +14,7 @@ import { useClientes } from '@/hooks/useClientes'
 import { useAuth } from '@/hooks/useAuth'
 import { useUndoStack } from '@/hooks/useUndoStack'
 import { useToast } from '@/components/ui/Toast'
-import { crearTarea, actualizarTarea, registrarCambio, listarPortalesPorProyecto, publicarPortales, type PortalResumen } from '@/lib/firestore'
+import { crearTarea, actualizarTarea, registrarCambio, listarPortalesPorProyecto, publicarPortales, suscribirTareasPorProyecto, type PortalResumen } from '@/lib/firestore'
 import { aplicarCascada } from '@/lib/cascadeUtils'
 import { calcularRutaCritica } from '@/lib/criticalPath'
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, tsToDate, isVencida, isProximaAVencer, BLOQUEO_COLORS } from '@/lib/utils'
@@ -114,7 +114,43 @@ export function ProyectoDetailPage() {
 
   const empresa = empresas.find((e) => e.id === empresaId)
   const proyecto = proyectos.find((p) => p.id === proyectoId)
-  const enrichedTareas = useMemo(() => enrichTareas(tareas), [tareas])
+
+  // ── Proyecto global: consolida las tareas de sus subproyectos ──────────────
+  // Las tareas siguen viviendo en su proyecto. Aquí se muestran copias con la fase
+  // prefijada ("Proyecto 1 · Fase 1") y el orden desplazado por subproyecto; para editar
+  // se usa siempre la tarea original (ver `original`).
+  const subIds = useMemo(() => proyecto?.subproyectos ?? [], [proyecto?.subproyectos?.join(',')])
+  const esGlobal = subIds.length > 0
+  const [tareasSub, setTareasSub] = useState<Record<string, Tarea[]>>({})
+  useEffect(() => {
+    if (!subIds.length) return
+    const unsubs = subIds.map(id => suscribirTareasPorProyecto(id, ts => setTareasSub(prev => ({ ...prev, [id]: ts }))))
+    return () => unsubs.forEach(u => u())
+  }, [subIds])
+  const nombresProyectos = useMemo(() => {
+    const m: Record<string, string> = {}
+    if (proyecto) m[proyecto.id] = proyecto.nombre
+    subIds.forEach(id => { m[id] = proyectos.find(p => p.id === id)?.nombre ?? 'Proyecto' })
+    return m
+  }, [proyecto, subIds, proyectos])
+  const tareasVista = useMemo(() => {
+    if (!esGlobal) return tareas
+    const copias = subIds.flatMap((id, i) => (tareasSub[id] ?? []).map(t => ({
+      ...t,
+      fase: `${nombresProyectos[id]} · ${t.fase?.trim() || 'Sin fase'}`,
+      orden: (i + 1) * 1e8 + (t.orden ?? 0),
+    })))
+    return [...tareas, ...copias]
+  }, [esGlobal, tareas, tareasSub, subIds, nombresProyectos])
+  const original = useCallback((t: Tarea): Tarea => {
+    if (t.proyectoId === proyectoId) return tareas.find(x => x.id === t.id) ?? t
+    return (tareasSub[t.proyectoId] ?? []).find(x => x.id === t.id) ?? t
+  }, [proyectoId, tareas, tareasSub])
+  const tareasDelProyectoDe = (t: Tarea | null) =>
+    !t || t.proyectoId === proyectoId ? tareas : (tareasSub[t.proyectoId] ?? [])
+
+  const enrichedTareas = useMemo(() => enrichTareas(tareasVista), [tareasVista])
+  useEffect(() => { if (esGlobal && vista === 'tabla') setVista('lista') }, [esGlobal, vista])
   const rutaCritica = useMemo(() => calcularRutaCritica(enrichedTareas), [enrichedTareas])
   const numerosMap = useMemo(() => computeNumeros(enrichedTareas), [enrichedTareas])
 
@@ -140,7 +176,7 @@ export function ProyectoDetailPage() {
   useEffect(() => {
     if (!proyecto || loading || !portalesProyecto.some(p => p.activo)) return
     const t = setTimeout(() => {
-      publicarPortales(proyecto, tareas, portalesProyecto)
+      publicarPortales(proyecto, tareasVista, portalesProyecto)
         .then(hash => {
           if (hash && portalesProyecto.some(p => p.activo && p.publicoHash !== hash)) {
             setPortalesProyecto(prev => prev.map(p => (p.activo ? { ...p, publicoHash: hash } : p)))
@@ -149,7 +185,7 @@ export function ProyectoDetailPage() {
         .catch(() => {})
     }, 2000)
     return () => clearTimeout(t)
-  }, [proyecto, tareas, loading, portalesProyecto])
+  }, [proyecto, tareasVista, loading, portalesProyecto])
 
   // Deep-link: abrir la actividad de un portal desde la campana (?portal=TOKEN)
   useEffect(() => {
@@ -228,7 +264,7 @@ export function ProyectoDetailPage() {
       })
       await registrarCambio({
         tareaId: id,
-        proyectoId: proyectoId!,
+        proyectoId: tarea.proyectoId ?? proyectoId!,
         campo: 'estado',
         valorAnterior: ESTADO_LABELS[tarea.estado],
         valorNuevo: ESTADO_LABELS[estado],
@@ -351,7 +387,8 @@ export function ProyectoDetailPage() {
               <div className="flex items-center bg-slate-100 rounded-xl p-0.5">
                 {([
                   ['lista',  <List size={13} />,     'Lista'],
-                  ['tabla',  <Table2 size={13} />,   'Tabla'],
+                  // La Tabla edita en línea campos estructurales: no se ofrece en la vista global
+                  ...(esGlobal ? [] : [['tabla',  <Table2 size={13} />,   'Tabla']]),
                   ['kanban', <Columns3 size={13} />,  'Kanban'],
                   ['gantt',  <BarChart2 size={13} />, 'Gantt'],
                   ['carga',  <Users size={13} />,    'Carga'],
@@ -439,6 +476,20 @@ export function ProyectoDetailPage() {
         </div>
       </div>
 
+      {esGlobal && (
+        <div className="flex items-center gap-2 flex-wrap px-6 py-2 bg-indigo-50 border-b border-indigo-100 text-xs text-indigo-800">
+          <Layers size={13} />
+          <span className="font-semibold">Proyecto global:</span>
+          {subIds.map(id => (
+            <button key={id} onClick={() => navigate(`/empresa/${empresaId}/proyecto/${id}`)}
+              className="px-2 py-0.5 rounded-full bg-white border border-indigo-200 hover:border-indigo-400 font-medium">
+              {nombresProyectos[id]} · {(tareasSub[id] ?? []).filter(t => t.tipo !== 'grupo').length}
+            </button>
+          ))}
+          <span className="text-indigo-600">Puedes cambiar estados aquí; la estructura (orden, jerarquía) se edita en cada proyecto.</span>
+        </div>
+      )}
+
       {/* Filter bar (cronograma only) */}
       {topTab === 'cronograma' && tareas.length > 0 && (
         <div className="flex items-center gap-3 px-6 py-2 border-b border-slate-100 bg-white flex-shrink-0 flex-wrap">
@@ -489,6 +540,7 @@ export function ProyectoDetailPage() {
       <div className={cn('flex-1 min-h-0', vista === 'tabla' && topTab === 'cronograma' ? 'overflow-hidden' : 'overflow-auto')}>
         {topTab === 'dashboard' ? (
           <ProyectoDashboard tareas={enrichedTareas} proyectoId={proyectoId} nombreParaCliente={proyecto?.nombre}
+            nombresProyectos={esGlobal ? nombresProyectos : undefined}
             portalUrl={portalesProyecto.find(p => p.activo) ? `${window.location.origin}/portal/${portalesProyecto.find(p => p.activo)!.token}` : undefined}
             onAbrirTarea={setSelectedTarea} />
         ) : loading ? (
@@ -541,10 +593,10 @@ export function ProyectoDetailPage() {
             rutaCritica={rutaCritica}
             onUpdate={handleGanttUpdate}
             onTareaClick={(t) => setSelectedTarea(t)}
-            onReparent={async (taskId, newParentId) => {
+            onReparent={esGlobal ? undefined : async (taskId, newParentId) => {
               await actualizarTarea(taskId, { parentId: newParentId ?? undefined })
             }}
-            onToggleDependency={async (taskId, depId) => {
+            onToggleDependency={esGlobal ? undefined : async (taskId, depId) => {
               const t = tareas.find((x) => x.id === taskId)
               if (!t) return
               const deps = t.dependencias ?? []
@@ -559,11 +611,11 @@ export function ProyectoDetailPage() {
       {/* Modal tarea */}
       {showModal && proyectoId && empresaId && (
         <TareaModal
-          tarea={editTarea}
+          tarea={editTarea ? original(editTarea) : editTarea}
           proyectoId={proyectoId}
           empresaId={empresaId}
           uid={user!.uid}
-          tareas={tareas}
+          tareas={tareasDelProyectoDe(editTarea)}
           onClose={() => { setShowModal(false); setEditTarea(null) }}
           onCascade={(count) => toast(`${count} tarea${count > 1 ? 's' : ''} ajustada${count > 1 ? 's' : ''} por dependencia`)}
         />
@@ -641,6 +693,7 @@ export function ProyectoDetailPage() {
           uid={user!.uid}
           proyecto={proyecto}
           clientes={clientes}
+          proyectosDisponibles={proyectos}
           onClose={() => setShowEditProyecto(false)}
           onSave={() => setShowEditProyecto(false)}
         />

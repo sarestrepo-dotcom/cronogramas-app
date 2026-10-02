@@ -36,6 +36,8 @@ export interface Proyecto {
   objetivo?: string
   descripcion?: string
   valorVenta?: number
+  /** Proyecto global: se alimenta de las tareas de estos proyectos (vista consolidada) */
+  subproyectos?: string[]
   /** Lo escribe el Apps Script del Google Sheet vinculado (Sheet → App) */
   sheetSync?: { url: string; nombre: string; ultimaSync: Timestamp; filas: number; error?: string | null }
   fechaInicio: Timestamp

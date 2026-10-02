@@ -372,6 +372,29 @@ pruebas antes de cada deploy de reglas.** Principios:
 - Dashboard → "Avance por fase" (default) o "Grupos" (toggle). La fase de una tarea hereda la de su ancestro.
   Orden de fases = orden de aparición (`orden`), con fallback por nombre natural (Fase 2 < Fase 10).
 
+### Proyecto global (consolidado)
+- `proyecto.subproyectos: string[]` (Editar proyecto → "Proyecto global"). No puede contener otro global.
+- `ProyectoDetailPage` se suscribe a las tareas de cada subproyecto y arma `tareasVista`: copias con
+  `fase = "<Subproyecto> · <fase>"` y `orden` desplazado. **Para editar se usa siempre `original(t)`**
+  (nunca guardar la copia: la fase prefijada terminaría en la BD). En vista global: sin Tabla, sin
+  reparentar ni dependencias en el Gantt; estados y fechas sí. Dashboard con vista "Proyectos".
+- El portal del global publica la vista consolidada. Portafolio calcula su salud con las tareas de sus subproyectos.
+
+### Portafolio (`/portafolio`)
+- Salud: `calcularSalud` (`lib/saludUtils.ts`) = avance real vs esperado (lineal por fechas de cada tarea);
+  rojo ≥20 pts de atraso / 3+ vencidas / bloqueo del cliente 7+ días; amarillo ≥8 pts / vencidas / bloqueadas.
+- Bloqueos de todos los proyectos agrupados por cliente, con "Copiar para seguimiento".
+- `bloqueadaDesde`: lo pone `actualizarTarea`/`crearTarea` (y el script de Sheets) al entrar a bloqueada; se
+  borra al salir. Sin él se usa `actualizadoEn` como aproximación. Umbral `UMBRAL_BLOQUEO_DIAS` = 7.
+
+### Otros (oct 2026)
+- Sprints: `tarea.sprint` (columna "Sprint"/"Sprint propuesto"; ya no se confunde con Fase). Filtro `?sprint=`.
+- Línea base en el dashboard: `LineaBaseComparacion` (desvío de fin por proyecto/fase/tarea).
+- Resumen para el cliente: `lib/resumenCliente.ts` (sin bloqueos internos ni responsables).
+- Borrado con subtareas: `EliminarTareasModal` (borrar todo o conservar subiendo un nivel).
+- Historial: el script de Sheets registra en `historial_cambios` cada cambio ("Google Sheets · editor").
+- Detección de columnas (script): por puntaje — nombre exacto principal > sinónimo exacto > parcial.
+
 ### Bloqueos y filtros
 - `tarea.bloqueo`: `'interno' | 'cliente'` (solo relevante si `estado === 'bloqueada'`). Columna "Bloqueo" del
   Sheet/importador. Se ve en el modal de bloqueadas (pestañas), el panel de tarea y el portal
