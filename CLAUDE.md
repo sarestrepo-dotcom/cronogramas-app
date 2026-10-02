@@ -465,6 +465,19 @@ ofrece para copiar en **Herramientas → Google Sheets** (`SheetsSyncModal`). Si
 - Plantilla: `public/integraciones/plantilla-cronograma.csv` (descargable desde el asistente).
 - **Al cambiar el script hay que volver a pegarlo en cada Sheet vinculado** (no se actualiza solo).
 
+### COR (COR → App)
+Apps Script `public/integraciones/cronogramas-cor.gs`, instalado en un Google Sheet "Panel COR" (uno para
+todas las empresas). Asistente en **Herramientas → COR** (`CorSyncModal`).
+- API: `https://api.projectcor.com/v1`, OAuth2 client credentials (`Authorization: Basic base64(key:secret)`,
+  token 1 h, cacheado). Una instancia por empresa; llaves en Script Properties (`cor:<nombre>`), nunca en la hoja.
+- Pestaña "Vinculaciones": Instancia | ID proyecto COR | Proyecto COR | Enlace Cronogramas | Última sync | Resultado.
+- Cada 10 min (trigger): `/tasks` (filtro projects), `/hours` (suma `duration` por tarea),
+  `/tasks/{id}/collaborators` (cacheado 6 h). Doc id `cor_<idCOR>`, `origen: 'cor'`, `corId`,
+  `horasTrabajadas`, `horasEstimadas` (suma `estimated_by_user`). Estados: nueva→pendiente,
+  en_proceso→en_progreso, estancada→bloqueada, finalizada→completada. Prioridad 0–3 → baja..critica.
+- Solo toca tareas `origen: 'cor'`; borra las que ya no están o se archivaron. Historial "COR · instancia".
+  Escribe `proyectos/{id}.corSync` (badge) y republica portales. Sin webhooks en la API de COR.
+
 ### Búsqueda global (Cmd+K)
 `SearchModal` carga todas las tareas y proyectos del usuario al abrirse. Las queries de Firestore con `in` están divididas en chunks de 10 (límite de Firestore). Navega a `/empresa/:id/proyecto/:id?tarea=:id` para abrir el panel de tarea directamente.
 

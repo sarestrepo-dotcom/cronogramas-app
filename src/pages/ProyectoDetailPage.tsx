@@ -38,6 +38,7 @@ const ProcesarEmailModal  = lazy(() => import('@/components/tareas/ProcesarEmail
 const LineasBaseModal     = lazy(() => import('@/components/lineasBase/LineasBaseModal').then(m => ({ default: m.LineasBaseModal })))
 const PlantillasModal     = lazy(() => import('@/components/plantillas/PlantillasModal').then(m => ({ default: m.PlantillasModal })))
 const PortalModal         = lazy(() => import('@/components/proyecto/PortalModal').then(m => ({ default: m.PortalModal })))
+const CorSyncModal        = lazy(() => import('@/components/proyecto/CorSyncModal').then(m => ({ default: m.CorSyncModal })))
 const SheetsSyncModal     = lazy(() => import('@/components/proyecto/SheetsSyncModal').then(m => ({ default: m.SheetsSyncModal })))
 
 const CargandoVista = () => (
@@ -90,6 +91,7 @@ export function ProyectoDetailPage() {
   const [showEditProyecto, setShowEditProyecto] = useState(false)
   const [showPortal, setShowPortal] = useState(false)
   const [showSheets, setShowSheets] = useState(false)
+  const [showCor, setShowCor] = useState(false)
   const [idsAEliminar, setIdsAEliminar] = useState<string[] | null>(null)
   const [portalTokenActividad, setPortalTokenActividad] = useState<string | undefined>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -366,6 +368,14 @@ export function ProyectoDetailPage() {
                 <Sheet size={11} /> {proyecto.sheetSync.error ? 'Error en Sheet' : 'Google Sheets'}
               </button>
             )}
+            {proyecto?.corSync && (
+              <button onClick={() => setShowCor(true)}
+                title={proyecto.corSync.error ? `Error de sincronización: ${proyecto.corSync.error}` : `Sincronizado con COR: "${proyecto.corSync.nombre}"`}
+                className={cn('flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border',
+                  proyecto.corSync.error ? 'text-rose-600 bg-rose-50 border-rose-200' : 'text-sky-700 bg-sky-50 border-sky-200')}>
+                <Link2 size={11} /> {proyecto.corSync.error ? 'Error en COR' : 'COR'}
+              </button>
+            )}
           </div>
           <button onClick={() => setShowModal(true)}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
@@ -458,6 +468,10 @@ export function ProyectoDetailPage() {
                       <button onClick={() => { setShowSheets(true); setShowHerramientas(false) }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
                         <Sheet size={14} className="text-emerald-600" /> Google Sheets
+                      </button>
+                      <button onClick={() => { setShowCor(true); setShowHerramientas(false) }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                        <Link2 size={14} className="text-sky-600" /> COR
                       </button>
                       <button onClick={() => {
                           const cliente = clientes.find(c => c.id === proyecto?.clienteId)
@@ -719,6 +733,10 @@ export function ProyectoDetailPage() {
           onClose={() => setIdsAEliminar(null)}
           onDone={(n) => { toast(`${n} tarea${n === 1 ? '' : 's'} eliminada${n === 1 ? '' : 's'}`, 'warning'); clearSelection() }}
         />
+      )}
+
+      {showCor && proyecto && (
+        <CorSyncModal proyecto={proyecto} onClose={() => setShowCor(false)} />
       )}
 
       {showSheets && proyecto && (

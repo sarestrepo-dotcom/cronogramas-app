@@ -40,6 +40,8 @@ export interface Proyecto {
   subproyectos?: string[]
   /** Lo escribe el Apps Script del Google Sheet vinculado (Sheet → App) */
   sheetSync?: { url: string; nombre: string; ultimaSync: Timestamp; filas: number; error?: string | null }
+  /** Lo escribe el Apps Script de COR (COR → App) */
+  corSync?: { instancia: string; corProjectId: number; nombre: string; ultimaSync: Timestamp; tareas: number; error?: string | null }
   fechaInicio: Timestamp
   fechaFin: Timestamp
   estado: 'activo' | 'pausado' | 'completado' | 'archivado'
@@ -70,7 +72,10 @@ export interface Tarea {
   fase?: string
   notas?: string
   entregables?: string     // deliverables / output description
-  origen?: 'sheets'        // creada/gestionada desde un Google Sheet vinculado
+  origen?: 'sheets' | 'cor' // creada/gestionada desde un Google Sheet o un proyecto de COR
+  corId?: number           // id de la tarea en COR
+  horasTrabajadas?: number // horas registradas (COR)
+  horasEstimadas?: number  // horas estimadas (COR)
   numero?: string          // numeración propia (Sheet/importación); si falta se calcula sola
   bloqueo?: TipoBloqueo    // de quién depende desbloquear una tarea bloqueada
   bloqueadaDesde?: Timestamp // cuándo pasó a 'bloqueada' (se borra al desbloquear)

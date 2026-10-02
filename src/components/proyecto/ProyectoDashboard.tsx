@@ -155,6 +155,8 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, nombr
   const pendientes  = nonGrupo.filter(t => t.estado === 'pendiente').length
   const listaBloqueadas = nonGrupo.filter(t => t.estado === 'bloqueada')
   const bloqueadas  = listaBloqueadas.length
+  const horasTrabajadas = nonGrupo.reduce((s, t) => s + (t.horasTrabajadas ?? 0), 0)
+  const horasEstimadas  = nonGrupo.reduce((s, t) => s + (t.horasEstimadas ?? 0), 0)
   const globalPct   = total > 0 ? Math.round(nonGrupo.reduce((s, t) => s + (t.progreso ?? 0), 0) / total) : 0
 
   const grupos = allTareas.filter(t => t.tipo === 'grupo')
@@ -199,6 +201,11 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, nombr
           <StatCard label="Bloqueadas"    value={bloqueadas}   valueClass="text-red-600"
             onClick={() => setShowBloqueadas(true)} hint="Ver motivos" />
           <StatCard label="Avance global" value={`${globalPct}%`} valueClass="text-indigo-600" />
+          {horasTrabajadas > 0 && (
+            <StatCard label={horasEstimadas > 0 ? `Horas (de ${Math.round(horasEstimadas)} est.)` : 'Horas registradas'}
+              value={`${Math.round(horasTrabajadas)} h`}
+              valueClass={horasEstimadas > 0 && horasTrabajadas > horasEstimadas ? 'text-red-600' : 'text-sky-600'} />
+          )}
         </div>
       </div>
 

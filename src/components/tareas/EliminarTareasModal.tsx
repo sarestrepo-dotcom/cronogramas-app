@@ -33,6 +33,7 @@ export function EliminarTareasModal({ ids, tareas, onClose, onDone }: Props) {
   const seleccion = tareas.filter(t => ids.includes(t.id))
   const hijos = descendientes(ids, tareas)
   const delSheet = [...seleccion, ...hijos].filter(t => t.origen === 'sheets').length
+  const delCor = [...seleccion, ...hijos].filter(t => t.origen === 'cor').length
 
   const ejecutar = async (conHijos: boolean) => {
     setBorrando(true)
@@ -84,6 +85,13 @@ export function EliminarTareasModal({ ids, tareas, onClose, onDone }: Props) {
           <div className="flex gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
             <Sheet size={14} className="flex-shrink-0 mt-0.5" />
             <p>{delSheet} tarea{delSheet === 1 ? ' viene' : 's vienen'} del Google Sheet: si no se borra{delSheet === 1 ? '' : 'n'} o desmarca{delSheet === 1 ? '' : 'n'} allá, volverá{delSheet === 1 ? '' : 'n'} a aparecer en la próxima sincronización.</p>
+          </div>
+        )}
+
+        {delCor > 0 && (
+          <div className="flex gap-2 text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2">
+            <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+            <p>{delCor} tarea{delCor === 1 ? ' viene' : 's vienen'} de COR: volverá{delCor === 1 ? '' : 'n'} a aparecer en la próxima sincronización. Archívala{delCor === 1 ? '' : 's'} o bórrala{delCor === 1 ? '' : 's'} en COR.</p>
           </div>
         )}
 

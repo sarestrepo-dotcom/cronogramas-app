@@ -155,6 +155,22 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
                 {diasBloqueada(tarea) !== null && <span className="font-normal"> · {textoDiasBloqueada(diasBloqueada(tarea))}</span>}
               </div>
             )}
+            {tarea.origen === 'cor' && (
+              <div className="mx-5 mt-4 flex gap-2 text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2">
+                <Link size={14} className="flex-shrink-0 mt-0.5" />
+                <p>Esta tarea viene de <b>COR</b>{tarea.corId ? ` (#${tarea.corId})` : ''}. Edítala allá: los cambios hechos aquí se sobrescriben en la próxima sincronización.</p>
+              </div>
+            )}
+            {(tarea.horasTrabajadas !== undefined || tarea.horasEstimadas !== undefined) && (
+              <div className="mx-5 mt-4 flex items-center gap-4 text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <span>⏱ <b>{(tarea.horasTrabajadas ?? 0).toLocaleString('es-CO', { maximumFractionDigits: 1 })} h</b> trabajadas</span>
+                {tarea.horasEstimadas !== undefined && (
+                  <span className={cn((tarea.horasTrabajadas ?? 0) > tarea.horasEstimadas ? 'text-red-600 font-semibold' : 'text-slate-500')}>
+                    de {tarea.horasEstimadas.toLocaleString('es-CO', { maximumFractionDigits: 1 })} h estimadas
+                  </span>
+                )}
+              </div>
+            )}
             {tarea.origen === 'sheets' && (
               <div className="mx-5 mt-4 flex gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
                 <Sheet size={14} className="flex-shrink-0 mt-0.5" />
