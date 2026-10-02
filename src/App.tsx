@@ -11,6 +11,7 @@ import { PortalClientePage } from './pages/PortalClientePage'
 const LoginPage          = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })))
 const DashboardPage      = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
 const MisTareasPage      = lazy(() => import('./pages/MisTareasPage').then(m => ({ default: m.MisTareasPage })))
+const PortafolioPage     = lazy(() => import('./pages/PortafolioPage').then(m => ({ default: m.PortafolioPage })))
 const EmpresasPage       = lazy(() => import('./pages/EmpresasPage').then(m => ({ default: m.EmpresasPage })))
 const ClientesPage       = lazy(() => import('./pages/ClientesPage').then(m => ({ default: m.ClientesPage })))
 const ProyectosPage      = lazy(() => import('./pages/ProyectosPage').then(m => ({ default: m.ProyectosPage })))
@@ -50,6 +51,7 @@ export default function App() {
                   <Route index element={<Navigate to="/dashboard" replace />} />
                   <Route path="dashboard" element={<DashboardPage />} />
                   <Route path="mis-tareas" element={<MisTareasPage />} />
+                  <Route path="portafolio" element={<PortafolioPage />} />
                   <Route path="empresas" element={<EmpresasPage />} />
                   <Route path="empresa/:empresaId/proyectos" element={<ClientesPage />} />
                   <Route path="empresa/:empresaId/cliente/:clienteId/proyectos" element={<ProyectosPage />} />

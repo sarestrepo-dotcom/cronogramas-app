@@ -8,6 +8,8 @@ import { generarEmailsResumen } from '@/lib/emailUtils'
 import { exportCSV } from '@/lib/exportUtils'
 import { TareasBloqueadasModal } from './TareasBloqueadasModal'
 import { compararFases } from '@/lib/hierarchyUtils'
+import { calcularSalud, SEMAFORO_ESTILOS } from '@/lib/saludUtils'
+import { BarraAvance } from '@/pages/PortafolioPage'
 import type { Tarea } from '@/types'
 
 type DashTab = 'resumen' | 'semanal'
@@ -142,8 +144,27 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
   const hitos  = tareas.filter(t => t.tipo === 'hito').sort((a, b) =>
     (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
 
+  const salud = useMemo(() => calcularSalud(allTareas), [allTareas])
+  const est = SEMAFORO_ESTILOS[salud.semaforo]
+
   return (
     <div className="p-6 space-y-8 max-w-5xl mx-auto">
+      {/* Semáforo de salud (todo el proyecto, sin filtros) */}
+      <div className={cn('rounded-2xl border px-5 py-4 flex items-center gap-5 flex-wrap', est.bg, 'border-slate-200')}>
+        <div className="flex items-center gap-3 min-w-[200px]">
+          <span className={cn('w-4 h-4 rounded-full flex-shrink-0', est.dot)} />
+          <div>
+            <p className={cn('text-sm font-bold', est.text)}>{est.label}</p>
+            <p className="text-xs text-slate-600">{salud.motivo}</p>
+          </div>
+        </div>
+        <div className="flex-1 min-w-[220px]"><BarraAvance salud={salud} /></div>
+        <div className="text-xs text-slate-600 space-y-0.5">
+          <p><b className={salud.diferencia < 0 ? 'text-red-600' : 'text-emerald-600'}>{salud.diferencia > 0 ? '+' : ''}{salud.diferencia} pts</b> vs. lo planeado</p>
+          <p>{salud.vencidas} vencida{salud.vencidas === 1 ? '' : 's'} · {salud.bloqueadas} bloqueada{salud.bloqueadas === 1 ? '' : 's'}</p>
+        </div>
+      </div>
+
       {/* Stats cards */}
       <div>
         {proyectoNombre && <h2 className="text-lg font-bold text-slate-800 mb-4">{proyectoNombre}</h2>}

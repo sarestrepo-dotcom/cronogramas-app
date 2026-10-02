@@ -16,6 +16,7 @@ import {
   Share2,
   CheckSquare,
   Search,
+  Activity,
 } from 'lucide-react'
 import { NotificacionesBell } from './NotificacionesPanel'
 import { cn, getInitials } from '@/lib/utils'
@@ -77,6 +78,7 @@ export function Sidebar({ empresaActiva, onEmpresaChange, onOpenSearch }: Sideba
 
         <NavItem to="/dashboard"   icon={<LayoutDashboard size={16} />} label="Dashboard"    active={isActive('/dashboard')} />
         <NavItem to="/mis-tareas" icon={<CheckSquare size={16} />}     label="Mis tareas"   active={isActive('/mis-tareas')} />
+        <NavItem to="/portafolio" icon={<Activity size={16} />}        label="Portafolio"   active={isActive('/portafolio')} />
         <NavItem to="/empresas"   icon={<Building2 size={16} />}       label="Empresas"     active={isActive('/empresas')} />
 
         {/* Empresa activa + proyectos */}

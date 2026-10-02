@@ -601,6 +601,21 @@ export async function fetchTareasGlobal(empresaIds: string[]): Promise<Tarea[]> 
   return results.flatMap(snap => snap.docs.map(d => ({ id: d.id, ...d.data() }) as Tarea))
 }
 
+export async function fetchClientesGlobal(empresaIds: string[]): Promise<Cliente[]> {
+  const out: Cliente[] = []
+  for (let i = 0; i < empresaIds.length; i += 10) {
+    const snap = await getDocs(query(collection(db, 'clientes'), where('empresaId', 'in', empresaIds.slice(i, i + 10)))).catch(() => null)
+    snap?.docs.forEach(d => out.push({ id: d.id, ...d.data() } as Cliente))
+  }
+  return out
+}
+
+// Proyectos compartidos directamente con el usuario (fuera de sus empresas)
+export async function fetchProyectosPorIds(ids: string[]): Promise<Proyecto[]> {
+  const snaps = await Promise.all(ids.map(id => getDoc(doc(db, 'proyectos', id)).catch(() => null)))
+  return snaps.filter(s => s?.exists()).map(s => ({ id: s!.id, ...s!.data() }) as Proyecto)
+}
+
 // Un query por proyecto: si se perdió acceso a uno, los demás se siguen cargando
 export async function fetchTareasDeProyectos(proyectoIds: string[]): Promise<Tarea[]> {
   const results = await Promise.all(proyectoIds.map(pid =>
