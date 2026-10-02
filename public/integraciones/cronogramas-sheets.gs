@@ -113,6 +113,11 @@ function instalarTriggers() {
 
 function alEditar(e) {
   if (e && e.range && String(e.range.getSheet().getSheetId()) !== props().getProperty('sheetId')) return
+  // Quién editó (para el historial de la tarea). Google solo lo entrega dentro del mismo dominio.
+  try {
+    const email = e && e.user && e.user.getEmail ? e.user.getEmail() : ''
+    if (email) CacheService.getDocumentCache().put('editor', email, 300)
+  } catch (err) { /* sin acceso al editor */ }
   sincronizar()
 }
 
@@ -210,6 +215,7 @@ function sincronizarUnaVez(proyectoId, empresaId) {
 
   // 3) Diferencias contra Firestore
   const campos = camposGestionados(cols)
+  const editor = CacheService.getDocumentCache().get('editor') || ''
   const writes = []
   let creadas = 0, actualizadas = 0, eliminadas = 0
   filas.forEach(function (f) {
@@ -230,6 +236,18 @@ function sincronizarUnaVez(proyectoId, empresaId) {
       writes.push({ update: { name: docName('tareas/' + f.id), fields: fields } })
       creadas++
     } else if (cambio(actual.fields, fields, camposFila)) {
+      historial(actual.fields, fields, camposFila).forEach(function (h) {
+        writes.push({ update: { name: docName('historial_cambios/' + nuevoId()), fields: {
+          tareaId: { stringValue: f.id },
+          proyectoId: { stringValue: proyectoId },
+          campo: { stringValue: h.campo },
+          valorAnterior: { stringValue: h.antes },
+          valorNuevo: { stringValue: h.despues },
+          cambiadoPor: { stringValue: 'google-sheets' },
+          cambiadoPorNombre: { stringValue: 'Google Sheets' + (editor ? ' · ' + editor : '') },
+          cambiadoEn: { timestampValue: new Date().toISOString() },
+        } } })
+      })
       fields.actualizadoEn = { timestampValue: new Date().toISOString() }
       writes.push({
         update: { name: docName('tareas/' + f.id), fields: fields },
@@ -495,6 +513,26 @@ function valorComparable(x) {
   if (x.doubleValue !== undefined) return Number(x.doubleValue)
   if (x.stringValue !== undefined) return x.stringValue
   return JSON.stringify(x)
+}
+
+// Cambios visibles para el historial de la tarea (mismo formato que registra la app)
+const CAMPOS_HISTORIAL = ['titulo', 'estado', 'progreso', 'fechaInicio', 'fechaFin', 'asignadosA', 'prioridad', 'notas', 'fase', 'bloqueo', 'entregables']
+const ESTADO_LABEL = { pendiente: 'Pendiente', en_progreso: 'En progreso', completada: 'Completada', bloqueada: 'Bloqueada' }
+
+function legible(campo, x) {
+  if (!x) return ''
+  if (x.timestampValue) return Utilities.formatDate(new Date(x.timestampValue), SpreadsheetApp.getActive().getSpreadsheetTimeZone(), 'dd/MM/yyyy')
+  if (x.arrayValue) return (x.arrayValue.values || []).map(function (v) { return v.stringValue || '' }).join(', ')
+  if (campo === 'progreso') return String(x.integerValue !== undefined ? x.integerValue : x.doubleValue) + '%'
+  if (campo === 'estado') return ESTADO_LABEL[x.stringValue] || x.stringValue
+  return x.stringValue !== undefined ? x.stringValue : String(x.integerValue || '')
+}
+
+function historial(actual, nuevo, campos) {
+  return CAMPOS_HISTORIAL
+    .filter(function (k) { return campos.indexOf(k) >= 0 && valorComparable(actual[k]) !== valorComparable(nuevo[k]) })
+    .map(function (k) { return { campo: k, antes: legible(k, actual[k]).slice(0, 500), despues: legible(k, nuevo[k]).slice(0, 500) } })
+    .filter(function (h) { return h.antes !== h.despues })
 }
 
 function cambio(actual, nuevo, campos) {

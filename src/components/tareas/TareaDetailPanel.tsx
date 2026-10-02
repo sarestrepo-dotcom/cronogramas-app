@@ -23,6 +23,10 @@ const CAMPO_LABELS: Record<string, string> = {
   asignadosA: 'Responsables',
   titulo: 'Título',
   prioridad: 'Prioridad',
+  notas: 'Notas',
+  fase: 'Fase',
+  bloqueo: 'Bloqueo',
+  entregables: 'Entregable',
 }
 
 type Tab = 'detalle' | 'comentarios' | 'historial'
