@@ -49,6 +49,20 @@ export const ESTADO_LABELS: Record<EstadoTarea, string> = {
   bloqueada:   'Bloqueada',
 }
 
+// Días que lleva bloqueada una tarea. Las bloqueadas antes de existir `bloqueadaDesde`
+// usan la última actualización como aproximación ("al menos N días").
+export const UMBRAL_BLOQUEO_DIAS = 7
+export function diasBloqueada(t: { estado: string; bloqueadaDesde?: Timestamp; actualizadoEn?: Timestamp }): number | null {
+  if (t.estado !== 'bloqueada') return null
+  const desde = t.bloqueadaDesde ?? t.actualizadoEn
+  if (!desde?.seconds) return null
+  return Math.max(0, Math.floor((Date.now() - desde.seconds * 1000) / 86400000))
+}
+export function textoDiasBloqueada(dias: number | null): string {
+  if (dias === null) return ''
+  return dias === 0 ? 'Bloqueada hoy' : `Bloqueada hace ${dias} día${dias === 1 ? '' : 's'}`
+}
+
 export const BLOQUEO_LABELS = { interno: 'Interno', cliente: 'Cliente' } as const
 export const BLOQUEO_COLORS = {
   interno: { bg: 'bg-violet-100', text: 'text-violet-700' },

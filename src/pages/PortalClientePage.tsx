@@ -12,7 +12,7 @@ import {
 } from '@/lib/firestore'
 import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUtils'
 import { GanttVisual } from '@/components/gantt/GanttVisual'
-import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, isVencida } from '@/lib/utils'
+import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, isVencida, diasBloqueada, textoDiasBloqueada } from '@/lib/utils'
 import type { Tarea } from '@/types'
 
 // Las reglas rechazan escrituras demasiado seguidas (anti-spam) o con datos inválidos
@@ -239,6 +239,9 @@ export function PortalClientePage() {
                         <p className="text-sm font-medium text-slate-800">{t.tipo === 'hito' ? '◆ ' : ''}{t.titulo}</p>
                         {t.bloqueo === 'cliente' && (
                           <span className="inline-block mt-1 text-[11px] font-semibold bg-amber-100 text-amber-800 rounded-md px-1.5 py-0.5">Requiere acción de su parte</span>
+                        )}
+                        {diasBloqueada(t) !== null && (
+                          <span className="inline-block mt-1 ml-1 text-[11px] text-slate-500">{textoDiasBloqueada(diasBloqueada(t))}</span>
                         )}
                         {t.bloqueo === 'interno' && (
                           <span className="inline-block mt-1 text-[11px] font-semibold bg-violet-100 text-violet-700 rounded-md px-1.5 py-0.5">En gestión del equipo</span>

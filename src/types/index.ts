@@ -71,6 +71,7 @@ export interface Tarea {
   origen?: 'sheets'        // creada/gestionada desde un Google Sheet vinculado
   numero?: string          // numeración propia (Sheet/importación); si falta se calcula sola
   bloqueo?: TipoBloqueo    // de quién depende desbloquear una tarea bloqueada
+  bloqueadaDesde?: Timestamp // cuándo pasó a 'bloqueada' (se borra al desbloquear)
   creadoPor: string
   creadoEn: Timestamp
   actualizadoEn: Timestamp

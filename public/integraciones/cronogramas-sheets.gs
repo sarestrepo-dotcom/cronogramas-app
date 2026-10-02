@@ -233,6 +233,7 @@ function sincronizarUnaVez(proyectoId, empresaId) {
       fields.actualizadoEn = { timestampValue: new Date().toISOString() }
       if (!fields.dependencias) fields.dependencias = { arrayValue: { values: [] } }
       if (!fields.progreso) fields.progreso = { integerValue: '0' }
+      if (f.estado === 'bloqueada') fields.bloqueadaDesde = { timestampValue: new Date().toISOString() }
       writes.push({ update: { name: docName('tareas/' + f.id), fields: fields } })
       creadas++
     } else if (cambio(actual.fields, fields, camposFila)) {
@@ -249,9 +250,14 @@ function sincronizarUnaVez(proyectoId, empresaId) {
         } } })
       })
       fields.actualizadoEn = { timestampValue: new Date().toISOString() }
+      // Antigüedad del bloqueo: se marca al entrar a 'bloqueada' y se borra al salir
+      const mascara = camposFila.concat(['actualizadoEn'])
+      const antes = str(actual.fields.estado)
+      if (f.estado === 'bloqueada' && antes !== 'bloqueada') { fields.bloqueadaDesde = { timestampValue: new Date().toISOString() }; mascara.push('bloqueadaDesde') }
+      if (f.estado !== 'bloqueada' && antes === 'bloqueada') mascara.push('bloqueadaDesde')
       writes.push({
         update: { name: docName('tareas/' + f.id), fields: fields },
-        updateMask: { fieldPaths: camposFila.concat(['actualizadoEn']) },
+        updateMask: { fieldPaths: mascara },
         currentDocument: { exists: true },
       })
       actualizadas++
@@ -581,6 +587,7 @@ function publicarPortales(proyectoId) {
       fechaFin: copiar(t.fechaFin),
       notas: bloqueada ? copiar(t.notas) : nul,
       bloqueo: bloqueada ? copiar(t.bloqueo) : nul,
+      bloqueadaDesde: bloqueada ? copiar(t.bloqueadaDesde || t.actualizadoEn) : nul,
     } } }
   })
   const duenos = Object.keys((pf.miembros && pf.miembros.mapValue && pf.miembros.mapValue.fields) || {})

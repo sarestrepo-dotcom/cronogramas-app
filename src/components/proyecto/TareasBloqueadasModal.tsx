@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { X, Ban, Copy, Check, ArrowRight, StickyNote } from 'lucide-react'
-import { cn, formatFecha, isVencida, diasRestantes, PRIORIDAD_COLORS, BLOQUEO_LABELS, BLOQUEO_COLORS } from '@/lib/utils'
+import { cn, formatFecha, isVencida, diasRestantes, PRIORIDAD_COLORS, BLOQUEO_LABELS, BLOQUEO_COLORS, diasBloqueada, textoDiasBloqueada, UMBRAL_BLOQUEO_DIAS } from '@/lib/utils'
 import type { Tarea } from '@/types'
 
 const PRIORIDAD_LABELS = { baja: 'Baja', media: 'Media', alta: 'Alta', critica: 'Crítica' }
@@ -36,7 +36,9 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
   }
   const ordenadas = bloqueadas
     .filter(t => lado === 'todos' || (lado === 'sin' ? !t.bloqueo : t.bloqueo === lado))
-    .sort((a, b) => (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
+    // Las que llevan más tiempo bloqueadas primero
+    .sort((a, b) => (diasBloqueada(b) ?? 0) - (diasBloqueada(a) ?? 0) || (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
+  const viejas = bloqueadas.filter(t => (diasBloqueada(t) ?? 0) >= UMBRAL_BLOQUEO_DIAS).length
   const sinMotivo = ordenadas.filter(t => !t.notas?.trim()).length
 
   const copiarResumen = async () => {
@@ -45,7 +47,7 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
       '',
       ...ordenadas.flatMap(t => [
         `⛔ ${t.titulo}${grupoDe(t) ? ` — ${grupoDe(t)}` : ''}`,
-        `   Bloqueo: ${t.bloqueo ? BLOQUEO_LABELS[t.bloqueo] : 'Sin clasificar'} · Responsable: ${responsablesDe(t) || 'Sin asignar'} · Entrega: ${formatFecha(t.fechaFin)}`,
+        `   ${textoDiasBloqueada(diasBloqueada(t))} · Bloqueo: ${t.bloqueo ? BLOQUEO_LABELS[t.bloqueo] : 'Sin clasificar'} · Responsable: ${responsablesDe(t) || 'Sin asignar'} · Entrega: ${formatFecha(t.fechaFin)}`,
         `   Motivo: ${t.notas?.trim() || 'Sin motivo registrado'}`,
         '',
       ]),
@@ -71,6 +73,7 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
                 {sinMotivo > 0
                   ? `${sinMotivo} sin motivo registrado en Notas`
                   : 'Todas tienen el motivo registrado'}
+                {viejas > 0 && <span className="text-red-600 font-semibold"> · {viejas} con {UMBRAL_BLOQUEO_DIAS}+ días bloqueada{viejas === 1 ? '' : 's'}</span>}
               </p>
             </div>
           </div>
@@ -123,6 +126,12 @@ export function TareasBloqueadasModal({ bloqueadas, allTareas, onClose, onAbrirT
                 </div>
 
                 <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-2 text-xs text-slate-500">
+                  {diasBloqueada(t) !== null && (
+                    <span className={cn('px-1.5 py-0.5 rounded-md font-semibold',
+                      (diasBloqueada(t) ?? 0) >= UMBRAL_BLOQUEO_DIAS ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700')}>
+                      ⏱ {textoDiasBloqueada(diasBloqueada(t))}
+                    </span>
+                  )}
                   {t.bloqueo
                     ? <span className={cn('px-1.5 py-0.5 rounded-md font-semibold', BLOQUEO_COLORS[t.bloqueo].bg, BLOQUEO_COLORS[t.bloqueo].text)}>Bloqueo {BLOQUEO_LABELS[t.bloqueo].toLowerCase()}</span>
                     : <span className="px-1.5 py-0.5 rounded-md font-medium bg-slate-100 text-slate-500">Sin clasificar</span>}

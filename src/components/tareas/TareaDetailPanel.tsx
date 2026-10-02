@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { X, Pencil, Trash2, Calendar, Link, CheckCircle2, Circle, Clock, Flag, ExternalLink, Send, History, MessageSquare, Sheet } from 'lucide-react'
-import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, diasRestantes, isVencida, BLOQUEO_LABELS, BLOQUEO_COLORS } from '@/lib/utils'
+import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, PRIORIDAD_COLORS, diasRestantes, isVencida, BLOQUEO_LABELS, BLOQUEO_COLORS, diasBloqueada, textoDiasBloqueada } from '@/lib/utils'
 import { agregarComentario, eliminarComentario, suscribirComentarios, suscribirHistorial } from '@/lib/firestore'
 import { useAuth } from '@/hooks/useAuth'
 import type { Tarea, EstadoTarea, Comentario, CambioHistorial } from '@/types'
@@ -147,6 +147,7 @@ export function TareaDetailPanel({ tarea, tareas, onClose, onEdit, onDelete, onS
             {tarea.estado === 'bloqueada' && tarea.bloqueo && (
               <div className={cn('mx-5 mt-4 text-xs font-semibold rounded-xl px-3 py-2', BLOQUEO_COLORS[tarea.bloqueo].bg, BLOQUEO_COLORS[tarea.bloqueo].text)}>
                 ⛔ Bloqueo {BLOQUEO_LABELS[tarea.bloqueo].toLowerCase()}{tarea.bloqueo === 'cliente' ? ' — depende del cliente' : ' — depende del equipo'}
+                {diasBloqueada(tarea) !== null && <span className="font-normal"> · {textoDiasBloqueada(diasBloqueada(tarea))}</span>}
               </div>
             )}
             {tarea.origen === 'sheets' && (

@@ -232,6 +232,7 @@ export function suscribirTodosProyectosDeUsuario(_uid: string, empresaIds: strin
 export async function crearTarea(data: Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>): Promise<string> {
   const ref = await addDoc(collection(db, 'tareas'), {
     ...clean(data as Record<string, unknown>),
+    ...(data.estado === 'bloqueada' ? { bloqueadaDesde: serverTimestamp() } : {}),
     creadoEn: serverTimestamp(),
     actualizadoEn: serverTimestamp(),
   })
@@ -250,7 +251,15 @@ export async function actualizarTarea(id: string, data: Partial<Tarea>) {
     const auto = PROGRESO_ESTADO[update.estado]
     if (auto !== undefined) update.progreso = auto
   }
+  // Antigüedad del bloqueo: se marca al entrar a 'bloqueada' y se borra al salir
+  const extra: Record<string, unknown> = {}
+  if (update.estado !== undefined) {
+    const prev = (await getDoc(doc(db, 'tareas', id))).data()?.estado
+    if (update.estado === 'bloqueada' && prev !== 'bloqueada') extra.bloqueadaDesde = serverTimestamp()
+    if (update.estado !== 'bloqueada' && prev === 'bloqueada') extra.bloqueadaDesde = deleteField()
+  }
   await updateDoc(doc(db, 'tareas', id), {
+    ...extra,
     ...clean(update as Record<string, unknown>) as DocumentData,
     actualizadoEn: serverTimestamp(),
   })
@@ -712,6 +721,7 @@ export function construirDatosPortal(p: Proyecto, tareas: Tarea[]): DatosPortal 
       // Las notas solo se publican como motivo de bloqueo
       notas: t.estado === 'bloqueada' ? (t.notas ?? null) : null,
       bloqueo: t.estado === 'bloqueada' ? (t.bloqueo ?? null) : null,
+      bloqueadaDesde: t.estado === 'bloqueada' ? (t.bloqueadaDesde ?? t.actualizadoEn ?? null) : null,
     }) as unknown as Tarea),
   }
 }
