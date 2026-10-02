@@ -68,9 +68,10 @@ export function computeNumeros(tareas: Tarea[]): Map<string, string> {
 
   const roots = tareas.filter(t => !t.parentId || !ids.has(t.parentId)).sort(sortFn)
 
+  // Se respeta la numeración propia (Sheet / importación) cuando existe; si no, se calcula
   function traverse(tasks: Tarea[], prefix: string) {
     tasks.forEach((t, i) => {
-      const num = prefix ? `${prefix}.${i + 1}` : `${i + 1}`
+      const num = t.numero?.trim() || (prefix ? `${prefix}.${i + 1}` : `${i + 1}`)
       map.set(t.id, num)
       const children = tareas.filter(c => c.parentId === t.id).sort(sortFn)
       if (children.length) traverse(children, num)

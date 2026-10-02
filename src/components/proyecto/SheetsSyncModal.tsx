@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { X, Sheet, Copy, Check, ExternalLink, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { X, Sheet, Copy, Check, ExternalLink, AlertTriangle, CheckCircle2, Download } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { cn, tsToDate } from '@/lib/utils'
@@ -9,6 +9,19 @@ interface Props {
   proyecto: Proyecto
   onClose: () => void
 }
+
+const ESTRUCTURA: Array<[string, string]> = [
+  ['N°', 'Tu numeración, se guarda tal cual. Para que una tarea quede dentro de un grupo, numérala con el prefijo del grupo: 3 → 3.1, 3.2'],
+  ['Fase', 'La franja morada (p. ej. "Fase 1 · Kickoff"). Repítela en cada fila de esa fase'],
+  ['Tipo', 'tarea, hito o grupo. Un grupo es una tarea contenedora: su avance y fechas salen de sus subtareas'],
+  ['Tarea', 'Nombre de la tarea (obligatorio)'],
+  ['Responsable', 'Uno o varios separados por coma'],
+  ['Fecha inicio / Fecha fin', 'dd/mm/aaaa o celdas de fecha. Los grupos pueden ir sin fechas'],
+  ['Estado', 'Pendiente, En progreso, Completada o Bloqueada'],
+  ['Avance', '0–100 o %'],
+  ['Dependencia', 'N° de la tarea de la que depende (varias separadas por coma)'],
+  ['Notas', 'Si la tarea está bloqueada, explica el motivo aquí: es lo que verá el cliente en el portal'],
+]
 
 // El código del Apps Script se sirve como archivo estático (public/integraciones)
 const ARCHIVOS = {
@@ -42,6 +55,25 @@ export function SheetsSyncModal({ proyecto, onClose }: Props) {
   )
 
   const pasos: Array<{ titulo: string; detalle: React.ReactNode }> = [
+    {
+      titulo: 'Organiza la hoja con esta estructura (o parte de la plantilla)',
+      detalle: (
+        <div className="space-y-2">
+          <table className="w-full text-[11px] border border-slate-200 rounded-lg overflow-hidden">
+            <tbody className="divide-y divide-slate-100">
+              {ESTRUCTURA.map(([col, desc]) => (
+                <tr key={col}><td className="px-2 py-1 font-semibold text-slate-700 bg-slate-50 whitespace-nowrap align-top">{col}</td><td className="px-2 py-1">{desc}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <a href="/integraciones/plantilla-cronograma.csv" download="plantilla-cronograma.csv"
+            className="inline-flex items-center gap-1.5 text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-2.5 py-1 rounded-lg transition-colors">
+            <Download size={12} /> Descargar plantilla (CSV)
+          </a>
+          <p>En Google Sheets: <i>Archivo → Importar → Subir</i> el CSV. Puedes agregar más columnas propias (costos, notas internas…): no viajan a la app.</p>
+        </div>
+      ),
+    },
     {
       titulo: 'Abre tu Google Sheet y ve a Extensiones → Apps Script',
       detalle: 'Usa la cuenta de Google que administra Firebase (la del proyecto cronogramas-bluemartech).',
@@ -137,7 +169,8 @@ export function SheetsSyncModal({ proyecto, onClose }: Props) {
           <div className="text-xs text-slate-500 bg-slate-50 rounded-xl px-4 py-3 space-y-1">
             <p className="font-semibold text-slate-600">Cómo funciona</p>
             <ul className="list-disc list-inside space-y-0.5">
-              <li>Reconoce las columnas por su nombre: Número, Título/Actividad, Tipo, Fase, Padre, Fecha inicio, Fecha fin, Responsable, Estado, Prioridad, Progreso, Dependencia, Notas, Descripción.</li>
+              <li>Reconoce las columnas por su nombre (también acepta Actividad, Avance, Padre/Grupo, Prioridad, Descripción…).</li>
+              <li>Cada cambio también actualiza el portal del cliente.</li>
               <li>Solo actualiza los campos cuyas columnas existen en la hoja. Las demás columnas no viajan.</li>
               <li>Si borras o desmarcas una fila, la tarea se elimina del proyecto.</li>
               <li>Las tareas creadas aquí en la app no se tocan.</li>

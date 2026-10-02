@@ -365,6 +365,12 @@ pruebas antes de cada deploy de reglas.** Principios:
 
 ## Patrones clave
 
+### Fases vs grupos (no son lo mismo)
+- **Fase** = campo de texto `fase`. Es la **franja morada** que agrupa visualmente (buildHierarchy → `fase_header`).
+- **Grupo** = tarea `tipo: 'grupo'` con subtareas (`parentId`); avance/fechas derivados (enrichTareas).
+- **Numeración**: `tarea.numero` (del Sheet/importación) se muestra tal cual; si falta, `computeNumeros` la calcula.
+- Dashboard → "Avance por fase" (default) o "Grupos" (toggle). La fase de una tarea hereda la de su ancestro.
+
 ### enrichTareas (`hierarchyUtils.ts`)
 Función crítica que procesa las tareas antes de mostrarlas. Es recursiva con memoización (bottom-up):
 - Los **grupos** derivan su `progreso`, `estado`, `fechaInicio` y `fechaFin` de sus hijos
@@ -420,7 +426,11 @@ ofrece para copiar en **Herramientas → Google Sheets** (`SheetsSyncModal`). Si
   se tocan. Solo se escriben los campos cuyas columnas existen en la hoja.
 - Escribe `proyectos/{id}.sheetSync` (url, nombre, ultimaSync, filas, error) → badge en el proyecto.
 - Lógica de columnas/jerarquía espejo de `ImportarTareasModal` (mantener ambas alineadas).
-- Limitación: la copia pública del portal se refresca cuando alguien del equipo abre el proyecto.
+- Tras cada cambio el script también republica la copia pública de los portales activos
+  (misma forma que `construirDatosPortal`; `publicoHash` = `sheets-…`, la app republica una vez al abrir).
+- Grupo solo si `Tipo = grupo` o la fila tiene hijos (numeración 3 → 3.1 o columna Padre/Grupo).
+- Plantilla: `public/integraciones/plantilla-cronograma.csv` (descargable desde el asistente).
+- **Al cambiar el script hay que volver a pegarlo en cada Sheet vinculado** (no se actualiza solo).
 
 ### Búsqueda global (Cmd+K)
 `SearchModal` carga todas las tareas y proyectos del usuario al abrirse. Las queries de Firestore con `in` están divididas en chunks de 10 (límite de Firestore). Navega a `/empresa/:id/proyecto/:id?tarea=:id` para abrir el panel de tarea directamente.

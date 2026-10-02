@@ -67,6 +67,7 @@ export interface Tarea {
   notas?: string
   entregables?: string     // deliverables / output description
   origen?: 'sheets'        // creada/gestionada desde un Google Sheet vinculado
+  numero?: string          // numeración propia (Sheet/importación); si falta se calcula sola
   creadoPor: string
   creadoEn: Timestamp
   actualizadoEn: Timestamp

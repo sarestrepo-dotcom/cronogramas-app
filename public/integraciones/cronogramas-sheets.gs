@@ -247,7 +247,9 @@ function sincronizarUnaVez(proyectoId, empresaId) {
   })
 
   for (let i = 0; i < writes.length; i += 400) fsCommit(writes.slice(i, i + 400))
-  return { filas: filas.length, creadas: creadas, actualizadas: actualizadas, eliminadas: eliminadas }
+  let portales = 0
+  if (writes.length) portales = publicarPortales(proyectoId)
+  return { filas: filas.length, creadas: creadas, actualizadas: actualizadas, eliminadas: eliminadas, portales: portales }
 }
 
 // ─── Lectura de la hoja ───────────────────────────────────────────────────────
@@ -369,8 +371,8 @@ function parsearFila(row, cols, tz, id, indice) {
   const ini = parsearFecha(celda(row, cols, 'fechaInicio'), tz, false)
   const fin = parsearFecha(celda(row, cols, 'fechaFin'), tz, true)
   const estado = ESTADOS[normalizar(celda(row, cols, 'estado'))] || 'pendiente'
-  const tipoExpl = TIPOS[normalizar(celda(row, cols, 'tipo'))]
-  const tipo = tipoExpl || (!ini && !fin && !padre && numero.indexOf('.') < 0 ? 'grupo' : 'tarea')
+  // Grupo solo si la columna Tipo lo dice o si la fila tiene hijos (ver resolverJerarquia)
+  const tipo = TIPOS[normalizar(celda(row, cols, 'tipo'))] || 'tarea'
   const progRaw = celda(row, cols, 'progreso')
   let progreso
   if (cols.progreso !== undefined && String(progRaw).trim() !== '') {
@@ -403,11 +405,14 @@ function parsearFila(row, cols, tz, id, indice) {
 
 function resolverJerarquia(filas) {
   const parentNum = function (n) { const d = n.lastIndexOf('.'); return d > 0 ? n.slice(0, d) : '' }
-  const conHijos = {}
-  filas.forEach(function (f) { if (f.numero.indexOf('.') >= 0) conHijos[parentNum(f.numero)] = true })
+  const conHijos = {}, esPadre = {}
+  filas.forEach(function (f) {
+    if (f.numero.indexOf('.') >= 0) conHijos[parentNum(f.numero)] = true
+    if (f.padre) esPadre[f.padre.toLowerCase()] = true
+  })
   const porNumero = {}, porTitulo = {}
   filas.forEach(function (f) {
-    if (f.numero && f.tipo !== 'hito' && conHijos[f.numero]) f.tipo = 'grupo'
+    if (f.tipo !== 'hito' && ((f.numero && conHijos[f.numero]) || esPadre[f.titulo.toLowerCase()])) f.tipo = 'grupo'
     if (f.numero) porNumero[f.numero] = f.id
     porTitulo[f.titulo.toLowerCase()] = f.id
   })
@@ -429,6 +434,7 @@ function resolverJerarquia(filas) {
 // Solo se gestionan los campos cuyas columnas existen en la hoja (más los estructurales)
 function camposGestionados(cols) {
   const campos = ['titulo', 'tipo', 'parentId', 'orden', 'origen', 'estado', 'progreso', 'fechaInicio', 'fechaFin']
+  if (cols.numero !== undefined) campos.push('numero')
   if (cols.fase !== undefined) campos.push('fase')
   if (cols.descripcion !== undefined) campos.push('descripcion')
   if (cols.notas !== undefined) campos.push('notas')
@@ -443,6 +449,7 @@ function aFirestore(f, campos) {
   const set = function (k, val) { if (campos.indexOf(k) >= 0 && val !== undefined) v[k] = val }
   const s = function (x) { return x ? { stringValue: x } : undefined } // vacío → se borra el campo
   set('titulo', { stringValue: f.titulo })
+  set('numero', s(f.numero))
   set('tipo', { stringValue: f.tipo })
   set('parentId', s(f.parentId))
   set('orden', { integerValue: String(f.orden) })
@@ -474,6 +481,76 @@ function valorComparable(x) {
 
 function cambio(actual, nuevo, campos) {
   return campos.some(function (k) { return valorComparable(actual[k]) !== valorComparable(nuevo[k]) })
+}
+
+// ─── Portal del cliente ───────────────────────────────────────────────────────
+// Misma copia filtrada que publica la app (construirDatosPortal en src/lib/firestore.ts):
+// sin valor de venta, responsables, descripciones ni notas internas (notas solo si bloqueada).
+
+function publicarPortales(proyectoId) {
+  const proyecto = fsGet('proyectos/' + proyectoId)
+  if (!proyecto) return 0
+  const pf = proyecto.fields || {}
+  const r = UrlFetchApp.fetch(FS + ':runQuery', {
+    method: 'post', contentType: 'application/json', headers: headers(), muteHttpExceptions: true,
+    payload: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: 'portales' }],
+      where: { fieldFilter: { field: { fieldPath: 'proyectoId' }, op: 'EQUAL', value: { stringValue: proyectoId } } },
+    } }),
+  })
+  if (r.getResponseCode() !== 200) return 0
+  const activos = JSON.parse(r.getContentText())
+    .filter(function (x) { return x.document && x.document.fields && x.document.fields.activo && x.document.fields.activo.booleanValue === true })
+  if (!activos.length) return 0
+
+  const nul = { nullValue: null }
+  const copiar = function (v) { return v === undefined ? nul : v }
+  const tareas = listarTareasDelProyecto(proyectoId)
+  const lista = Object.keys(tareas).map(function (id) {
+    const t = tareas[id].fields
+    const bloqueada = str(t.estado) === 'bloqueada'
+    return { mapValue: { fields: {
+      id: { stringValue: id },
+      titulo: copiar(t.titulo),
+      numero: copiar(t.numero),
+      tipo: t.tipo || { stringValue: 'tarea' },
+      parentId: copiar(t.parentId),
+      orden: copiar(t.orden),
+      estado: copiar(t.estado),
+      prioridad: t.prioridad || { stringValue: 'media' },
+      progreso: t.progreso || { integerValue: '0' },
+      fase: copiar(t.fase),
+      dependencias: t.dependencias || { arrayValue: { values: [] } },
+      fechaInicio: copiar(t.fechaInicio),
+      fechaFin: copiar(t.fechaFin),
+      notas: bloqueada ? copiar(t.notas) : nul,
+    } } }
+  })
+  const duenos = Object.keys((pf.miembros && pf.miembros.mapValue && pf.miembros.mapValue.fields) || {})
+    .filter(function (uid) { return str(pf.miembros.mapValue.fields[uid]) === 'owner' })
+  if (!duenos.length && str(pf.creadoPor)) duenos.push(str(pf.creadoPor))
+
+  const fields = {
+    empresaId: copiar(pf.empresaId),
+    duenos: { arrayValue: { values: duenos.map(function (u) { return { stringValue: u } }) } },
+    publico: { mapValue: { fields: {
+      proyecto: { mapValue: { fields: {
+        nombre: copiar(pf.nombre), objetivo: copiar(pf.objetivo), estado: copiar(pf.estado),
+        fechaInicio: copiar(pf.fechaInicio), fechaFin: copiar(pf.fechaFin),
+      } } },
+      tareas: { arrayValue: { values: lista } },
+      actualizadoEn: { timestampValue: new Date().toISOString() },
+    } } },
+    // Distinto al hash de la app: cuando alguien abra el proyecto, la app republica una vez
+    publicoHash: { stringValue: 'sheets-' + Date.now() },
+  }
+  const writes = activos.map(function (x) {
+    return { update: { name: x.document.name, fields: fields },
+      updateMask: { fieldPaths: ['empresaId', 'duenos', 'publico', 'publicoHash'] },
+      currentDocument: { exists: true } }
+  })
+  fsCommit(writes)
+  return activos.length
 }
 
 // ─── Firestore REST (con la cuenta de Google de quien vinculó la hoja) ────────
@@ -543,5 +620,6 @@ function resumen(res) {
   if (res.error) return '⚠️ Error: ' + res.error
   if (res.pendiente) return 'Sincronización en curso…'
   return '✅ ' + res.filas + ' filas sincronizadas · ' + res.creadas + ' nuevas · ' +
-    res.actualizadas + ' actualizadas · ' + res.eliminadas + ' eliminadas'
+    res.actualizadas + ' actualizadas · ' + res.eliminadas + ' eliminadas' +
+    (res.portales ? ' · portal del cliente actualizado' : '')
 }

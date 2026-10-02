@@ -121,6 +121,8 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
   const globalPct   = total > 0 ? Math.round(nonGrupo.reduce((s, t) => s + (t.progreso ?? 0), 0) / total) : 0
 
   const grupos = allTareas.filter(t => t.tipo === 'grupo')
+  const [vistaAvance, setVistaAvance] = useState<'fases' | 'grupos'>('fases')
+  const fases = useMemo(() => calcularAvancePorFase(nonGrupo, allTareas), [nonGrupo, allTareas])
   const hitos  = tareas.filter(t => t.tipo === 'hito').sort((a, b) =>
     (a.fechaFin?.seconds ?? 0) - (b.fechaFin?.seconds ?? 0))
 
@@ -140,27 +142,52 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
         </div>
       </div>
 
-      {/* Progress per grupo */}
-      {grupos.length > 0 && (
+      {/* Avance por fase (franjas moradas) o por grupo (▶ tareas contenedoras) */}
+      {(fases.length > 0 || grupos.length > 0) && (
         <div>
-          <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Avance por grupo / fase</h3>
+          <div className="flex items-center justify-between mb-3 gap-3">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">
+              {vistaAvance === 'fases' ? 'Avance por fase' : 'Avance por grupo'}
+            </h3>
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
+              {([['fases', `Fases (${fases.length})`], ['grupos', `Grupos (${grupos.length})`]] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setVistaAvance(v)}
+                  className={cn('px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                    vistaAvance === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {(vistaAvance === 'fases' ? fases : grupos).length === 0 ? (
+            <p className="text-sm text-slate-400 bg-white rounded-xl border border-dashed border-slate-200 p-4 text-center">
+              {vistaAvance === 'fases'
+                ? 'Ninguna tarea tiene Fase asignada.'
+                : 'No hay grupos (tareas con subtareas) en este proyecto.'}
+            </p>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {grupos.map(g => (
-              <div key={g.id} className="bg-white rounded-xl border border-slate-200 p-4">
-                <p className="text-sm font-semibold text-slate-700 mb-2 truncate">▶ {g.titulo}</p>
+            {(vistaAvance === 'fases'
+              ? fases.map(f => ({ key: f.nombre, titulo: f.nombre, icono: '', progreso: f.progreso, estado: f.estado, detalle: `${f.completadas}/${f.total} tareas completadas` }))
+              : grupos.map(g => ({ key: g.id, titulo: g.titulo, icono: '▶ ', progreso: g.progreso ?? 0, estado: g.estado, detalle: '' }))
+            ).map(c => (
+              <div key={c.key} className="bg-white rounded-xl border border-slate-200 p-4">
+                <p className="text-sm font-semibold text-slate-700 mb-2 truncate">{c.icono}{c.titulo}</p>
                 <div className="flex items-center gap-3">
                   <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500 rounded-full transition-all"
-                      style={{ width: `${g.progreso ?? 0}%` }} />
+                    <div className={cn('h-full rounded-full transition-all', c.progreso === 100 ? 'bg-emerald-500' : 'bg-indigo-500')}
+                      style={{ width: `${c.progreso}%` }} />
                   </div>
-                  <span className="text-sm font-bold text-indigo-600 w-10 text-right">{g.progreso ?? 0}%</span>
+                  <span className="text-sm font-bold text-indigo-600 w-10 text-right">{c.progreso}%</span>
                 </div>
-                <p className={cn('text-xs mt-1.5 font-medium', ESTADO_COLORS[g.estado].text)}>
-                  {ESTADO_LABELS[g.estado]}
-                </p>
+                <div className="flex items-center justify-between mt-1.5">
+                  <p className={cn('text-xs font-medium', ESTADO_COLORS[c.estado].text)}>{ESTADO_LABELS[c.estado]}</p>
+                  {c.detalle && <p className="text-[11px] text-slate-400">{c.detalle}</p>}
+                </div>
               </div>
             ))}
           </div>
+          )}
         </div>
       )}
 
@@ -264,6 +291,39 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
       )}
     </div>
   )
+}
+
+// La fase de una tarea es la suya o, si no tiene, la de su ancestro más cercano.
+// Avance = promedio de las tareas (completada cuenta 100%), igual que enrichTareas.
+function calcularAvancePorFase(tareas: Tarea[], allTareas: Tarea[]) {
+  const porId = new Map(allTareas.map(t => [t.id, t]))
+  const faseDe = (t: Tarea): string => {
+    let cur: Tarea | undefined = t
+    for (let i = 0; cur && i < 50; i++) {
+      if (cur.fase?.trim()) return cur.fase.trim()
+      cur = cur.parentId ? porId.get(cur.parentId) : undefined
+    }
+    return ''
+  }
+  const orden: string[] = []
+  const map = new Map<string, Tarea[]>()
+  for (const t of tareas) {
+    const f = faseDe(t)
+    if (!f) continue
+    if (!map.has(f)) { map.set(f, []); orden.push(f) }
+    map.get(f)!.push(t)
+  }
+  return orden.map(nombre => {
+    const ts = map.get(nombre)!
+    const completadas = ts.filter(t => t.estado === 'completada').length
+    const progreso = Math.round(ts.reduce((s, t) => s + (t.estado === 'completada' ? 100 : (t.progreso ?? 0)), 0) / ts.length)
+    const estado: Tarea['estado'] =
+      completadas === ts.length ? 'completada'
+      : ts.some(t => t.estado === 'bloqueada') ? 'bloqueada'
+      : ts.some(t => t.estado === 'en_progreso' || t.estado === 'completada' || (t.progreso ?? 0) > 0) ? 'en_progreso'
+      : 'pendiente'
+    return { nombre, total: ts.length, completadas, progreso, estado }
+  })
 }
 
 function StatCard({ label, value, valueClass, onClick, hint }: {

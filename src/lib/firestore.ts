@@ -698,6 +698,7 @@ export function construirDatosPortal(p: Proyecto, tareas: Tarea[]): DatosPortal 
     tareas: tareas.map(t => ({
       id: t.id,
       titulo: t.titulo,
+      numero: t.numero ?? null,
       tipo: t.tipo ?? 'tarea',
       parentId: t.parentId ?? null,
       orden: t.orden ?? null,

@@ -444,6 +444,7 @@ export function ImportarTareasModal({ proyectoId, empresaId, uid, onClose, onImp
           progreso: f.progreso,
           fase: f.fase.trim() || undefined,
           notas: f.notas.trim() || undefined,
+          numero: f.numero || undefined,
           orden: i * 1000,
           proyectoId, empresaId, dependencias: [], creadoPor: uid,
         } as Omit<Tarea, 'id' | 'creadoEn' | 'actualizadoEn'>)
