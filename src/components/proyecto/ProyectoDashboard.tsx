@@ -11,6 +11,7 @@ import { compararFases } from '@/lib/hierarchyUtils'
 import { calcularSalud, SEMAFORO_ESTILOS } from '@/lib/saludUtils'
 import { BarraAvance } from './BarraAvance'
 import { LineaBaseComparacion } from './LineaBaseComparacion'
+import { generarResumenCliente } from '@/lib/resumenCliente'
 import type { Tarea } from '@/types'
 
 type DashTab = 'resumen' | 'semanal'
@@ -21,10 +22,13 @@ interface Props {
   tareas: Tarea[]
   proyectoNombre?: string
   proyectoId?: string
+  /** Para el resumen al cliente (no se muestra como título) */
+  nombreParaCliente?: string
+  portalUrl?: string
   onAbrirTarea?: (t: Tarea) => void
 }
 
-export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, onAbrirTarea }: Props) {
+export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, nombreParaCliente, portalUrl, onAbrirTarea }: Props) {
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = (searchParams.get('dash') as DashTab | null) ?? 'resumen'
   const setTab = (t: DashTab) =>
@@ -35,6 +39,7 @@ export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, onAbrirT
   const [filtroEstado, setFiltroEstado] = useState<Tarea['estado'] | ''>('')
   const [filtroBloqueo, setFiltroBloqueo] = useState<'interno' | 'cliente' | ''>('')
   const [showEmailModal, setShowEmailModal] = useState(false)
+  const [showResumenCliente, setShowResumenCliente] = useState(false)
 
   const grupos = useMemo(() => tareas.filter(t => t.tipo === 'grupo'), [tareas])
   const responsables = useMemo(() =>
@@ -103,6 +108,10 @@ export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, onAbrirT
             className="flex items-center gap-1.5 text-sm border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-xl transition-colors">
             <Download size={14} /> CSV / Sheets
           </button>
+          <button onClick={() => setShowResumenCliente(true)}
+            className="flex items-center gap-1.5 text-sm border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-xl transition-colors">
+            <Copy size={14} /> Resumen cliente
+          </button>
           <button onClick={() => setShowEmailModal(true)}
             className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-xl transition-colors">
             <Mail size={14} /> Email semanal
@@ -120,6 +129,11 @@ export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, onAbrirT
 
       {showEmailModal && (
         <EmailModal tareas={tareas} onClose={() => setShowEmailModal(false)} />
+      )}
+      {showResumenCliente && (
+        <ResumenClienteModal
+          texto={generarResumenCliente(nombreParaCliente ?? proyectoNombre ?? 'el proyecto', tareas, portalUrl)}
+          onClose={() => setShowResumenCliente(false)} />
       )}
     </div>
   )
@@ -521,6 +535,40 @@ function VistaSemanal({ tareas, allTareas }: { tareas: Tarea[]; allTareas: Tarea
 }
 
 // ─── Email preview modal ──────────────────────────────────────────────────────
+
+function ResumenClienteModal({ texto, onClose }: { texto: string; onClose: () => void }) {
+  const [valor, setValor] = useState(texto)
+  const [copiado, setCopiado] = useState(false)
+  const copiar = async () => {
+    await navigator.clipboard.writeText(valor)
+    setCopiado(true)
+    setTimeout(() => setCopiado(false), 2000)
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Resumen para el cliente</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Listo para pegar en correo o WhatsApp. Solo incluye bloqueos del cliente, nunca internos.</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"><X size={18} /></button>
+        </div>
+        <div className="flex-1 min-h-0 p-5">
+          <textarea value={valor} onChange={e => setValor(e.target.value)}
+            className="w-full h-full bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm text-slate-700 resize-none focus:outline-none focus:border-indigo-400 font-mono" />
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 rounded-b-2xl">
+          <button onClick={onClose} className="btn-secondary">Cerrar</button>
+          <button onClick={copiar} className="btn-primary flex items-center gap-2">
+            {copiado ? <Check size={14} /> : <Copy size={14} />} {copiado ? 'Copiado' : 'Copiar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function EmailModal({ tareas, onClose }: { tareas: Tarea[]; onClose: () => void }) {
   const emails = useMemo(() => generarEmailsResumen(tareas), [tareas])
