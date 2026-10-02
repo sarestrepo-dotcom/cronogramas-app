@@ -476,7 +476,7 @@ export function ProyectoDetailPage() {
       {/* Content */}
       <div className={cn('flex-1 min-h-0', vista === 'tabla' && topTab === 'cronograma' ? 'overflow-hidden' : 'overflow-auto')}>
         {topTab === 'dashboard' ? (
-          <ProyectoDashboard tareas={enrichedTareas} onAbrirTarea={setSelectedTarea} />
+          <ProyectoDashboard tareas={enrichedTareas} proyectoId={proyectoId} onAbrirTarea={setSelectedTarea} />
         ) : loading ? (
           <div className="flex items-center justify-center h-64">
             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />

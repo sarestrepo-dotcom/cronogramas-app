@@ -6,7 +6,8 @@ import { useEmpresas } from '@/hooks/useEmpresas'
 import {
   fetchTareasGlobal, fetchProyectosGlobal, fetchClientesGlobal, fetchProyectosPorIds, fetchTareasDeProyectos,
 } from '@/lib/firestore'
-import { calcularSalud, SEMAFORO_ESTILOS, type SaludProyecto } from '@/lib/saludUtils'
+import { calcularSalud, SEMAFORO_ESTILOS } from '@/lib/saludUtils'
+import { BarraAvance } from '@/components/proyecto/BarraAvance'
 import {
   cn, formatFecha, diasBloqueada, textoDiasBloqueada, UMBRAL_BLOQUEO_DIAS, BLOQUEO_LABELS, BLOQUEO_COLORS,
 } from '@/lib/utils'
@@ -180,18 +181,6 @@ function SaludTab({ proyectos, tareas, clientes, empresas }: { proyectos: Proyec
           </tbody>
         </table>
       </div>
-    </div>
-  )
-}
-
-export function BarraAvance({ salud }: { salud: SaludProyecto }) {
-  return (
-    <div>
-      <div className="relative h-2 bg-slate-100 rounded-full overflow-visible">
-        <div className="absolute inset-y-0 left-0 bg-indigo-500 rounded-full" style={{ width: `${salud.avanceReal}%` }} />
-        <div className="absolute -top-1 -bottom-1 w-0.5 bg-slate-800" style={{ left: `${salud.avanceEsperado}%` }} title={`Esperado: ${salud.avanceEsperado}%`} />
-      </div>
-      <p className="text-[11px] text-slate-500 mt-1">{salud.avanceReal}% real · {salud.avanceEsperado}% esperado</p>
     </div>
   )
 }

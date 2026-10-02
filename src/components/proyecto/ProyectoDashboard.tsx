@@ -9,7 +9,8 @@ import { exportCSV } from '@/lib/exportUtils'
 import { TareasBloqueadasModal } from './TareasBloqueadasModal'
 import { compararFases } from '@/lib/hierarchyUtils'
 import { calcularSalud, SEMAFORO_ESTILOS } from '@/lib/saludUtils'
-import { BarraAvance } from '@/pages/PortafolioPage'
+import { BarraAvance } from './BarraAvance'
+import { LineaBaseComparacion } from './LineaBaseComparacion'
 import type { Tarea } from '@/types'
 
 type DashTab = 'resumen' | 'semanal'
@@ -19,10 +20,11 @@ const PRIORIDAD_LABELS = { baja: 'Baja', media: 'Media', alta: 'Alta', critica: 
 interface Props {
   tareas: Tarea[]
   proyectoNombre?: string
+  proyectoId?: string
   onAbrirTarea?: (t: Tarea) => void
 }
 
-export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Props) {
+export function ProyectoDashboard({ tareas, proyectoNombre, proyectoId, onAbrirTarea }: Props) {
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = (searchParams.get('dash') as DashTab | null) ?? 'resumen'
   const setTab = (t: DashTab) =>
@@ -111,7 +113,7 @@ export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Prop
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {tab === 'resumen'
-          ? <ResumenEjecutivo tareas={filtered} allTareas={tareas} proyectoNombre={proyectoNombre} onAbrirTarea={onAbrirTarea} />
+          ? <ResumenEjecutivo tareas={filtered} allTareas={tareas} proyectoNombre={proyectoNombre} proyectoId={proyectoId} onAbrirTarea={onAbrirTarea} />
           : <VistaSemanal tareas={filtered} allTareas={tareas} />
         }
       </div>
@@ -125,8 +127,8 @@ export function ProyectoDashboard({ tareas, proyectoNombre, onAbrirTarea }: Prop
 
 // ─── Resumen ejecutivo ────────────────────────────────────────────────────────
 
-function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
-  tareas: Tarea[]; allTareas: Tarea[]; proyectoNombre?: string; onAbrirTarea?: (t: Tarea) => void
+function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, proyectoId, onAbrirTarea }: {
+  tareas: Tarea[]; allTareas: Tarea[]; proyectoNombre?: string; proyectoId?: string; onAbrirTarea?: (t: Tarea) => void
 }) {
   const [showBloqueadas, setShowBloqueadas] = useState(false)
   const nonGrupo = tareas.filter(t => t.tipo !== 'grupo')
@@ -227,6 +229,8 @@ function ResumenEjecutivo({ tareas, allTareas, proyectoNombre, onAbrirTarea }: {
           )}
         </div>
       )}
+
+      {proyectoId && <LineaBaseComparacion proyectoId={proyectoId} tareas={allTareas} />}
 
       {/* Hitos clave */}
       {hitos.length > 0 && (
