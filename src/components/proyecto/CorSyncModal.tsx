@@ -22,6 +22,7 @@ const MAPEO: Array<[string, string]> = [
   ['Fechas', 'Fecha de inicio (si COR la envía) y fecha de entrega (deadline)'],
   ['Responsables', 'Colaboradores asignados a la tarea'],
   ['Horas', 'Horas registradas por tarea (y estimadas si COR las envía)'],
+  ['No se trae', 'Tareas cuyo título empiece por "[Interno]" (reuniones, seguimientos del equipo) y todas sus subtareas'],
   ['Jerarquía', 'Tarea raíz con subtareas (p. ej. "SPRINT 01") → Fase · tarea madre intermedia ("Kick off") → ▶ Grupo · subtareas → tareas del grupo'],
   ['Fase', 'Etiqueta de COR que empiece por "Fase" o "F1, F2…" (p. ej. "Fase 1 · Kickoff"). Si no hay, la categoría; o el título con prefijo "[Fase 1] …"'],
   ['Sprint', 'Sprint de la tarea cuando existe'],

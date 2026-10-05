@@ -482,6 +482,7 @@ todas las empresas). Asistente en **Herramientas → COR** (`CorSyncModal`).
   madres intermedias → `tipo: 'grupo'` con `parentId: cor_<madre>`; orden = recorrido en profundidad.
 - **Fase**: etiqueta que empiece por "Fase"/"F1…" > categoría > prefijo "[Fase X]" en el título (se quita del título).
   Las subtareas heredan la fase del ancestro más cercano que la tenga.
+- **[Interno]**: tareas con ese prefijo en el título (y sus descendientes) no se sincronizan; si ya estaban, se borran.
   "COR → Diagnóstico" muestra los campos que envía COR para una tarea.
 - **Multiusuario**: solo la cuenta con IAM en Firebase escribe. Ella activa el trigger `tick` (cada minuto:
   sincroniza si hay `pendiente` en Script Properties o pasaron 10 min). Usuarios sin acceso (otro dominio)

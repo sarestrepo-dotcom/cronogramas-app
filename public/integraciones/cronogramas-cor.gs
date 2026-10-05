@@ -283,8 +283,12 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
   const tz = SpreadsheetApp.getActive().getSpreadsheetTimeZone()
 
   // 1) Tareas y horas del proyecto en COR
-  const tareasCor = listarTodo(token, '/tasks', { projects: [corProjectId] })
+  const todasCor = listarTodo(token, '/tasks', { projects: [corProjectId] })
     .filter(function (t) { return Number(t.project_id) === corProjectId && !t.archived })
+  // Tareas "[Interno]" (reuniones, seguimientos del equipo) y todas sus subtareas no se traen:
+  // no afectan el proyecto y el cliente no debe verlas. Si ya estaban, se eliminan abajo.
+  const internas = idsInternos(todasCor)
+  const tareasCor = todasCor.filter(function (t) { return !internas[t.id] })
   const horas = {}
   listarTodo(token, '/hours', { projects: [corProjectId] }).forEach(function (h) {
     const tid = (h.task && h.task.id) || h.task_id
@@ -413,13 +417,31 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
 
   for (let i = 0; i < writes.length; i += 400) fsCommit(writes.slice(i, i + 400))
   const portales = writes.length ? publicarPortales(proyectoId) : 0
-  return { tareas: tareasCor.length, creadas: creadas, actualizadas: actualizadas, eliminadas: eliminadas, portales: portales }
+  return { tareas: tareasCor.length, internas: Object.keys(internas).length, creadas: creadas, actualizadas: actualizadas, eliminadas: eliminadas, portales: portales }
 }
 
 // Fase de una tarea de COR, en este orden:
 // 1) Etiqueta que empiece por "Fase" o "F1", "F2"… (p. ej. "Fase 1 · Kickoff")
 // 2) Categoría de la tarea
 // 3) Texto entre corchetes al inicio del título: "[Fase 1] Kickoff con cliente" (se quita del título)
+// Título con prefijo [Interno] (sin importar mayúsculas/tildes/espacios)
+function esInterna(t) { return /^\s*\[\s*interno\s*\]/i.test(String(t.title || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')) }
+
+// Ids de tareas internas y de todos sus descendientes
+function idsInternos(tareas) {
+  const padre = {}
+  tareas.forEach(function (t) { const p = padreDe(t); if (p) padre[t.id] = p })
+  const porId = {}
+  tareas.forEach(function (t) { porId[t.id] = t })
+  const out = {}
+  tareas.forEach(function (t) {
+    for (let c = t.id, n = 0; c && n < 50; c = padre[c], n++) {
+      if (porId[c] && esInterna(porId[c])) { out[t.id] = true; break }
+    }
+  })
+  return out
+}
+
 // Id de la tarea madre en COR. La documentación pública no lo muestra: se prueban los nombres
 // habituales (usa COR → Diagnóstico para ver cuál envía tu instancia).
 function padreDe(t) {
@@ -673,5 +695,5 @@ function resumen(res) {
   if (!res) return ''
   if (res.error) return '⚠️ ' + res.error
   return '✅ ' + res.tareas + ' tareas · ' + res.creadas + ' nuevas · ' + res.actualizadas + ' actualizadas · ' +
-    res.eliminadas + ' eliminadas' + (res.portales ? ' · portal actualizado' : '')
+    res.eliminadas + ' eliminadas' + (res.internas ? ' · ' + res.internas + ' internas omitidas' : '') + (res.portales ? ' · portal actualizado' : '')
 }
