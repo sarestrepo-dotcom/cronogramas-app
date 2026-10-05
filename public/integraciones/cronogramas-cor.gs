@@ -222,7 +222,8 @@ function diagnostico() {
   SpreadsheetApp.getUi().alert('Campos de la tarea "' + t.title + '" (' + tareas.length + ' tareas en total):\n\n' + resumenCampos +
     '\n\nFase detectada: ' + (faseDeTarea(t).fase || faseRaizDiagnostico(t, tareas) || '— (ninguna)') +
     '\nTareas con tarea madre detectada: ' + tareas.filter(function (x) { return padreDe(x) }).length + ' de ' + tareas.length +
-    (tareas.some(function (x) { return padreDe(x) }) ? '' : '\n⚠️ No se detectó el campo de tarea madre: envía esta pantalla para ajustarlo.'))
+    (tareas.some(function (x) { return padreDe(x) }) ? '' : '\n⚠️ No se detectó el campo de tarea madre: envía esta pantalla para ajustarlo.') +
+    '\n\n' + reporteBloqueos(token, tareas))
 }
 
 // ─── Sincronización ───────────────────────────────────────────────────────────
@@ -557,24 +558,30 @@ function diagnosticoBloqueos() {
   const corId = pedir('Diagnóstico de bloqueos', 'ID del proyecto en COR:')
   if (!corId) return
   const token = obtenerToken(credenciales(inst))
-  const bloqueadas = listarTodo(token, '/tasks', { projects: [Number(corId)] })
-    .filter(function (t) { return estadoDe(t) === 'bloqueada' }).slice(0, 5)
-  if (!bloqueadas.length) { SpreadsheetApp.getUi().alert('No hay tareas Estancadas/Suspendidas en ese proyecto.'); return }
+  SpreadsheetApp.getUi().alert(reporteBloqueos(token, listarTodo(token, '/tasks', { projects: [Number(corId)] })))
+}
+
+// Resumen de los mensajes de hasta 5 tareas bloqueadas (qué responde COR y qué motivo se detecta)
+function reporteBloqueos(token, tareas) {
+  const estados = {}
+  tareas.forEach(function (t) { estados[t.status] = (estados[t.status] || 0) + 1 })
+  const resumenEstados = 'Estados en el proyecto: ' + Object.keys(estados).map(function (k) { return k + ' (' + estados[k] + ')' }).join(', ')
+  const bloqueadas = tareas.filter(function (t) { return estadoDe(t) === 'bloqueada' }).slice(0, 5)
+  if (!bloqueadas.length) return '── Bloqueos ──\n' + resumenEstados + '\nNo hay tareas Estancadas/Suspendidas en este proyecto.'
   const resps = pedirMensajes(token, bloqueadas.map(function (t) { return t.id }))
-  const txt = bloqueadas.map(function (t, i) {
+  return '── Bloqueos ──\n' + resumenEstados + '\n\n' + bloqueadas.map(function (t, i) {
     const r = resps[i]
-    let n = '?', primero = '', motivo = null
+    let n = '?', ultimo = '', motivo = null
     try {
       const lista = listaDe(JSON.parse(r.text))
       n = lista.length
-      primero = lista.length ? JSON.stringify(lista[lista.length - 1]).slice(0, 220) : ''
+      ultimo = lista.length ? JSON.stringify(lista[lista.length - 1]).slice(0, 220) : ''
       motivo = lista.map(function (m) { return parsearMotivo(textoDe(m)) }).filter(Boolean).pop() || null
-    } catch (e) { primero = r.text.slice(0, 220) }
+    } catch (e) { ultimo = r.text.slice(0, 220) }
     return '• "' + t.title + '" (#' + t.id + ', estado: ' + t.status + ')\n   HTTP ' + r.code + ' · mensajes: ' + n +
-      (primero ? '\n   Último: ' + primero : '') +
+      (ultimo ? '\n   Último: ' + ultimo : '') +
       '\n   Motivo detectado: ' + (motivo ? (motivo.tipo || 'sin tipo') + ' — ' + motivo.razon : 'ninguno')
   }).join('\n\n')
-  SpreadsheetApp.getUi().alert('Mensajes de tareas bloqueadas:\n\n' + txt)
 }
 
 // Colaboradores por tarea, en paralelo; se cachean 6 h para no agotar la cuota de llamadas
