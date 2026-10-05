@@ -22,7 +22,8 @@ const MAPEO: Array<[string, string]> = [
   ['Fechas', 'Fecha de inicio (si COR la envía) y fecha de entrega (deadline)'],
   ['Responsables', 'Colaboradores asignados a la tarea'],
   ['Horas', 'Horas registradas por tarea (y estimadas si COR las envía)'],
-  ['Sprint / categoría', 'Sprint y categoría (como Fase) cuando existen'],
+  ['Fase', 'Etiqueta de COR que empiece por "Fase" o "F1, F2…" (p. ej. "Fase 1 · Kickoff"). Si no hay, la categoría; o el título con prefijo "[Fase 1] …"'],
+  ['Sprint', 'Sprint de la tarea cuando existe'],
 ]
 
 export function CorSyncModal({ proyecto, onClose }: Props) {
@@ -75,7 +76,13 @@ export function CorSyncModal({ proyecto, onClose }: Props) {
         </div>
       </div>
     )],
-    ['Activa la sincronización automática', <p><b>COR → Activar sincronización automática</b> (cada 10 minutos). También puedes usar <b>Sincronizar ahora</b>.</p>],
+    ['Activa la sincronización automática (la cuenta administradora)', (
+      <div className="space-y-1">
+        <p><b>COR → Activar sincronización automática</b>: cada 10 minutos, con la cuenta que tiene acceso a Firebase.</p>
+        <p>Otras personas del equipo (incluso de otros dominios, p. ej. @triciclo.mx) pueden usar el mismo Panel: agregar instancias,
+          vincular proyectos y pedir <b>Sincronizar ahora</b>. Sus solicitudes las ejecuta la cuenta administradora en menos de 1 minuto.</p>
+      </div>
+    )],
   ]
 
   return (

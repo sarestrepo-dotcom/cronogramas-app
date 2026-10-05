@@ -33,6 +33,7 @@ function onOpen() {
     .addItem('Desactivar sincronización automática', 'desactivarAutomatica')
     .addSeparator()
     .addItem('Ver instancias registradas', 'verInstancias')
+    .addItem('Diagnóstico: ver campos que envía COR…', 'diagnostico')
     .addItem('Eliminar instancia…', 'eliminarInstancia')
     .addToUi()
 }
@@ -114,6 +115,14 @@ function vincularProyecto() {
   try {
     const token = obtenerToken(credenciales(inst))
     const pc = corGet(token, '/projects/' + encodeURIComponent(corId))
+    if (!tieneAccesoFirebase()) {
+      // Usuario sin acceso a Firebase (p. ej. otro dominio): la cuenta administradora valida y sincroniza
+      const hoja = hojaVinculaciones()
+      hoja.appendRow([inst, Number(corId), (pc && pc.name) || '', url, '', '⏳ Pendiente: la procesa la cuenta administradora'])
+      solicitarSincronizacion()
+      ui.alert('Vinculación registrada: "' + ((pc && pc.name) || corId) + '".\n\n' + mensajeSinAcceso())
+      return
+    }
     const proyecto = fsGet('proyectos/' + m[2])
     if (!proyecto) { ui.alert('No se encontró el proyecto en Cronogramas.'); return }
     if (str(proyecto.fields.empresaId) !== m[1]) { ui.alert('El proyecto no pertenece a esa empresa.'); return }
@@ -138,22 +147,78 @@ function hojaVinculaciones() {
   return hoja
 }
 
+// Toda escritura en Firebase la hace la cuenta que activó la sincronización automática
+// (con acceso IAM al proyecto). Otros usuarios del Panel (p. ej. de otro dominio) solo
+// dejan solicitudes, que el trigger de esa cuenta procesa en menos de 1 minuto.
 function activarAutomatica() {
+  if (!tieneAccesoFirebase()) {
+    SpreadsheetApp.getUi().alert('Esta acción debe hacerla una cuenta con acceso al proyecto de Firebase "' + FIREBASE_PROJECT +
+      '" (la del administrador). Tu cuenta puede vincular proyectos y pedir sincronizaciones, pero no activar la automática.')
+    return
+  }
   desactivarAutomatica(true)
-  ScriptApp.newTrigger('sincronizarTodo').timeBased().everyMinutes(10).create()
-  SpreadsheetApp.getUi().alert('Sincronización automática activada: cada 10 minutos.')
+  ScriptApp.newTrigger('tick').timeBased().everyMinutes(1).create()
+  props().setProperty('autoActiva', new Date().toISOString())
+  SpreadsheetApp.getUi().alert('Sincronización automática activada con tu cuenta: cada 10 minutos, y en menos de 1 minuto cuando alguien pida "Sincronizar ahora".')
 }
 
 function desactivarAutomatica(silencioso) {
+  let borrados = 0
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'sincronizarTodo') ScriptApp.deleteTrigger(t)
+    if (t.getHandlerFunction() === 'tick' || t.getHandlerFunction() === 'sincronizarTodo') { ScriptApp.deleteTrigger(t); borrados++ }
   })
-  if (silencioso !== true) SpreadsheetApp.getUi().alert('Sincronización automática desactivada.')
+  if (borrados) props().deleteProperty('autoActiva')
+  if (silencioso !== true) SpreadsheetApp.getUi().alert(borrados ? 'Sincronización automática desactivada.' : 'No hay sincronización automática activada con tu cuenta (solo la puede desactivar quien la activó).')
+}
+
+// Trigger de la cuenta administradora: cada minuto revisa si hay solicitudes; cada 10 min sincroniza igual
+function tick() {
+  const pendiente = props().getProperty('pendiente')
+  const ultima = Number(props().getProperty('ultimaAuto') || 0)
+  if (!pendiente && Date.now() - ultima < 9.5 * 60 * 1000) return
+  props().deleteProperty('pendiente')
+  props().setProperty('ultimaAuto', String(Date.now()))
+  sincronizarTodo()
+}
+
+function solicitarSincronizacion() { props().setProperty('pendiente', String(Date.now())) }
+
+function mensajeSinAcceso() {
+  return props().getProperty('autoActiva')
+    ? 'Tu cuenta no escribe directo en Cronogramas: la cuenta administradora lo hará en menos de 1 minuto. Revisa la columna "Resultado" de "' + HOJA_VINC + '".'
+    : '⚠️ Tu cuenta no tiene acceso directo a Cronogramas y la sincronización automática no está activada. Pide al administrador que ejecute COR → Activar sincronización automática.'
+}
+
+function tieneAccesoFirebase() {
+  try { fsGet('proyectos/verificacion-acceso-cor'); return true } catch (e) { if (/ 40[13]/.test(e.message)) return false; throw e }
 }
 
 function sincronizarAhora() {
+  if (!tieneAccesoFirebase()) {
+    solicitarSincronizacion()
+    SpreadsheetApp.getUi().alert('Solicitud de sincronización enviada.\n\n' + mensajeSinAcceso())
+    return
+  }
   const res = sincronizarTodo()
   SpreadsheetApp.getUi().alert(res.length ? res.join('\n') : 'No hay vinculaciones. Usa COR → Vincular proyecto…')
+}
+
+// Muestra los campos que envía COR para una tarea (para saber de dónde sacar fase, inicio, etc.)
+function diagnostico() {
+  const inst = pedir('Diagnóstico', 'Instancia de COR (' + instancias().join(', ') + '):')
+  if (!inst) return
+  const corId = pedir('Diagnóstico', 'ID del proyecto en COR:')
+  if (!corId) return
+  const token = obtenerToken(credenciales(inst))
+  const tareas = listarTodo(token, '/tasks', { projects: [Number(corId)] })
+  if (!tareas.length) { SpreadsheetApp.getUi().alert('El proyecto no tiene tareas en COR.'); return }
+  const t = tareas[0]
+  const resumenCampos = Object.keys(t).map(function (k) {
+    const v = t[k]
+    return '• ' + k + ': ' + (v && typeof v === 'object' ? JSON.stringify(v).slice(0, 120) : String(v).slice(0, 80))
+  }).join('\n')
+  SpreadsheetApp.getUi().alert('Campos de la tarea "' + t.title + '" (' + tareas.length + ' tareas en total):\n\n' + resumenCampos +
+    '\n\nFase detectada: ' + (faseDeTarea(t).fase || '— (ninguna)'))
 }
 
 // ─── Sincronización ───────────────────────────────────────────────────────────
@@ -181,6 +246,9 @@ function sincronizarFila(hoja, fila) {
   let res
   try {
     if (!m) throw new Error('Enlace de Cronogramas inválido')
+    const p = fsGet('proyectos/' + m[2])
+    if (!p) throw new Error('El proyecto de Cronogramas no existe (revisa el enlace)')
+    if (str(p.fields.empresaId) !== m[1]) throw new Error('El proyecto no pertenece a la empresa del enlace')
     res = sincronizarProyecto(String(inst), Number(corProjectId), m[1], m[2])
   } catch (e) {
     res = { error: String(e && e.message || e) }
@@ -245,10 +313,10 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
       const estimadas = cols.reduce(function (s, c) { return s + (Number(c.estimated_by_user) || 0) }, 0) ||
         Number(primero(t, ['estimated_time', 'estimated_hours', 'hours_estimated'])) || 0
       const sprint = (t.sprint && (t.sprint.name || t.sprint.title)) || primero(t, ['sprint_name']) || ''
-      const categoria = (t.category && t.category.name) || (t.categories && t.categories[0] && t.categories[0].name) || ''
+      const fd = faseDeTarea(t)
 
       const fields = {
-        titulo: { stringValue: String(t.title || 'Tarea COR ' + t.id) },
+        titulo: { stringValue: String(fd.titulo || t.title || 'Tarea COR ' + t.id) },
         descripcion: t.description ? { stringValue: limpiarHtml(t.description).slice(0, 5000) } : undefined,
         estado: { stringValue: estado },
         prioridad: { stringValue: PRIORIDADES[Number(t.priority)] || 'media' },
@@ -262,7 +330,7 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
         horasTrabajadas: { doubleValue: Math.round((horas[t.id] || 0) * 100) / 100 },
         horasEstimadas: estimadas ? { doubleValue: Math.round(estimadas * 100) / 100 } : undefined,
         sprint: sprint ? { stringValue: String(sprint) } : undefined,
-        fase: categoria ? { stringValue: String(categoria) } : undefined,
+        fase: fd.fase ? { stringValue: String(fd.fase) } : undefined,
         fechaInicio: ini ? { timestampValue: ini } : undefined,
         fechaFin: fin ? { timestampValue: fin } : undefined,
       }
@@ -308,6 +376,23 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
   for (let i = 0; i < writes.length; i += 400) fsCommit(writes.slice(i, i + 400))
   const portales = writes.length ? publicarPortales(proyectoId) : 0
   return { tareas: tareasCor.length, creadas: creadas, actualizadas: actualizadas, eliminadas: eliminadas, portales: portales }
+}
+
+// Fase de una tarea de COR, en este orden:
+// 1) Etiqueta que empiece por "Fase" o "F1", "F2"… (p. ej. "Fase 1 · Kickoff")
+// 2) Categoría de la tarea
+// 3) Texto entre corchetes al inicio del título: "[Fase 1] Kickoff con cliente" (se quita del título)
+function nombreDe(x) { return typeof x === 'string' ? x : (x && (x.name || x.label || x.title || x.description)) || '' }
+
+function faseDeTarea(t) {
+  const etiquetas = [].concat(t.labels || [], t.tags || []).map(nombreDe).map(function (n) { return String(n).trim() }).filter(Boolean)
+  const etiqueta = etiquetas.filter(function (n) { return /^(fase\b|f\s*\d)/i.test(n) })[0]
+  if (etiqueta) return { fase: etiqueta }
+  const categoria = nombreDe(t.category) || nombreDe(t.categories && t.categories[0])
+  if (categoria) return { fase: String(categoria).trim() }
+  const m = String(t.title || '').match(/^\s*\[([^\]]+)\]\s*(.*)$/)
+  if (m) return { fase: m[1].trim(), titulo: m[2].trim() || m[1].trim() }
+  return {}
 }
 
 // Colaboradores por tarea, en paralelo; se cachean 6 h para no agotar la cuota de llamadas
