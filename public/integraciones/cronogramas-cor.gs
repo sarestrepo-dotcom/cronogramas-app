@@ -212,13 +212,16 @@ function diagnostico() {
   const token = obtenerToken(credenciales(inst))
   const tareas = listarTodo(token, '/tasks', { projects: [Number(corId)] })
   if (!tareas.length) { SpreadsheetApp.getUi().alert('El proyecto no tiene tareas en COR.'); return }
-  const t = tareas[0]
+  // Se muestra una subtarea si la hay (ahí aparece el campo de la tarea madre)
+  const t = tareas.filter(function (x) { return padreDe(x) || Object.keys(x).some(function (k) { return /parent|padre|father/i.test(k) && x[k] }) })[0] || tareas[0]
   const resumenCampos = Object.keys(t).map(function (k) {
     const v = t[k]
     return '• ' + k + ': ' + (v && typeof v === 'object' ? JSON.stringify(v).slice(0, 120) : String(v).slice(0, 80))
   }).join('\n')
   SpreadsheetApp.getUi().alert('Campos de la tarea "' + t.title + '" (' + tareas.length + ' tareas en total):\n\n' + resumenCampos +
-    '\n\nFase detectada: ' + (faseDeTarea(t).fase || '— (ninguna)'))
+    '\n\nFase detectada: ' + (faseDeTarea(t).fase || '— (ninguna)') +
+    '\nTareas con tarea madre detectada: ' + tareas.filter(function (x) { return padreDe(x) }).length + ' de ' + tareas.length +
+    (tareas.some(function (x) { return padreDe(x) }) ? '' : '\n⚠️ No se detectó el campo de tarea madre: envía esta pantalla para ajustarlo.'))
 }
 
 // ─── Sincronización ───────────────────────────────────────────────────────────
@@ -296,10 +299,43 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
   let creadas = 0, actualizadas = 0, eliminadas = 0
   const vistos = {}
 
-  tareasCor
-    .sort(function (a, b) { return String(a.datetime || a.deadline || '').localeCompare(String(b.datetime || b.deadline || '')) || a.id - b.id })
+  // Jerarquía de COR (tareas madre / subtareas):
+  // - raíz con subtareas y sin fase propia (p. ej. "SPRINT 01") → es la FASE de sus descendientes
+  //   (no se crea como tarea)
+  // - tarea madre intermedia ("Kick off") → GRUPO; subtareas → tareas dentro del grupo
+  const porIdCor = {}
+  tareasCor.forEach(function (t) { porIdCor[t.id] = t })
+  const padreCor = {}, tieneHijos = {}
+  tareasCor.forEach(function (t) {
+    const p = padreDe(t)
+    if (p && p !== t.id && porIdCor[p]) { padreCor[t.id] = p; tieneHijos[p] = true }
+  })
+  const esFaseRaiz = function (cid) { return !padreCor[cid] && !!tieneHijos[cid] && !faseDeTarea(porIdCor[cid]).fase }
+  const faseHeredada = function (cid) {
+    for (let a = padreCor[cid], n = 0; a && n < 50; a = padreCor[a], n++) {
+      const f = faseDeTarea(porIdCor[a]).fase
+      if (f) return f
+      if (!padreCor[a] && esFaseRaiz(a)) return String(porIdCor[a].title || '').trim()
+    }
+    return ''
+  }
+  // Orden: como en COR (cada madre seguida de sus subtareas), hermanas por fecha
+  const porFecha = function (a, b) { return String(a.datetime || a.deadline || '').localeCompare(String(b.datetime || b.deadline || '')) || a.id - b.id }
+  const ordenadas = []
+  const recorrer = function (lista, nivel) {
+    lista.sort(porFecha).forEach(function (t) {
+      ordenadas.push(t)
+      if (nivel < 50) recorrer(tareasCor.filter(function (h) { return padreCor[h.id] === t.id }), nivel + 1)
+    })
+  }
+  recorrer(tareasCor.filter(function (t) { return !padreCor[t.id] }), 0)
+
+  ordenadas
     .forEach(function (t, i) {
+      if (esFaseRaiz(t.id)) return // la raíz es la fase: sus hijas llevan su nombre
       const id = 'cor_' + t.id
+      const padre = padreCor[t.id]
+      const parentId = padre && !esFaseRaiz(padre) ? 'cor_' + padre : ''
       vistos[id] = true
       const actual = existentes[id]
       const estado = ESTADOS[t.status] || 'pendiente'
@@ -314,6 +350,7 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
         Number(primero(t, ['estimated_time', 'estimated_hours', 'hours_estimated'])) || 0
       const sprint = (t.sprint && (t.sprint.name || t.sprint.title)) || primero(t, ['sprint_name']) || ''
       const fd = faseDeTarea(t)
+      const fase = fd.fase || faseHeredada(t.id)
 
       const fields = {
         titulo: { stringValue: String(fd.titulo || t.title || 'Tarea COR ' + t.id) },
@@ -321,7 +358,8 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
         estado: { stringValue: estado },
         prioridad: { stringValue: PRIORIDADES[Number(t.priority)] || 'media' },
         progreso: { integerValue: String(progreso) },
-        tipo: { stringValue: 'tarea' },
+        tipo: { stringValue: tieneHijos[t.id] ? 'grupo' : 'tarea' },
+        parentId: parentId ? { stringValue: parentId } : undefined,
         orden: { integerValue: String(i * 1000) },
         origen: { stringValue: 'cor' },
         corId: { integerValue: String(t.id) },
@@ -330,7 +368,7 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
         horasTrabajadas: { doubleValue: Math.round((horas[t.id] || 0) * 100) / 100 },
         horasEstimadas: estimadas ? { doubleValue: Math.round(estimadas * 100) / 100 } : undefined,
         sprint: sprint ? { stringValue: String(sprint) } : undefined,
-        fase: fd.fase ? { stringValue: String(fd.fase) } : undefined,
+        fase: fase ? { stringValue: String(fase) } : undefined,
         fechaInicio: ini ? { timestampValue: ini } : undefined,
         fechaFin: fin ? { timestampValue: fin } : undefined,
       }
@@ -382,6 +420,17 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
 // 1) Etiqueta que empiece por "Fase" o "F1", "F2"… (p. ej. "Fase 1 · Kickoff")
 // 2) Categoría de la tarea
 // 3) Texto entre corchetes al inicio del título: "[Fase 1] Kickoff con cliente" (se quita del título)
+// Id de la tarea madre en COR. La documentación pública no lo muestra: se prueban los nombres
+// habituales (usa COR → Diagnóstico para ver cuál envía tu instancia).
+function padreDe(t) {
+  const v = primero(t, ['parent_id', 'task_parent_id', 'parent_task_id', 'father_id', 'parentId', 'id_parent'])
+  if (v && /^\d+$/.test(String(v))) return Number(v)
+  const o = t.parent || t.parent_task || t.task_parent || t.father
+  if (o && typeof o === 'object' && o.id) return Number(o.id)
+  if (o && /^\d+$/.test(String(o))) return Number(o)
+  return null
+}
+
 function nombreDe(x) { return typeof x === 'string' ? x : (x && (x.name || x.label || x.title || x.description)) || '' }
 
 function faseDeTarea(t) {
