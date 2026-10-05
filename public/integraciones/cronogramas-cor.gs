@@ -34,6 +34,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Ver instancias registradas', 'verInstancias')
     .addItem('Diagnóstico: ver campos que envía COR…', 'diagnostico')
+    .addItem('Diagnóstico de bloqueos (mensajes)…', 'diagnosticoBloqueos')
     .addItem('Eliminar instancia…', 'eliminarInstancia')
     .addToUi()
 }
@@ -478,35 +479,87 @@ function faseDeTarea(t) {
   return {}
 }
 
-// "Bloqueo cliente: …", "Bloqueo interno: …" o "Bloqueo: …" (también "Bloqueada …", "del cliente", "externo", "equipo")
+// Busca en el mensaje (cualquier línea) un texto tipo:
+//   "Bloqueo cliente: …", "Bloqueo interno: …", "Bloqueo: …", "Bloqueado por el cliente: …",
+//   "Bloqueo del equipo - …". Ignora HTML, menciones (@Nombre) y emojis al inicio.
 function parsearMotivo(texto) {
-  const t = limpiarHtml(texto || '').replace(/\s+/g, ' ').trim()
-  const m = t.match(/^bloque(?:o|ada|ado)\b\s*(del cliente|de cliente|cliente|externo|interno|del equipo|equipo)?\s*[:\-–—]\s*(.+)$/i)
-  if (!m) return null
-  const lado = (m[1] || '').toLowerCase()
-  const tipo = /client|extern/.test(lado) ? 'cliente' : /intern|equipo/.test(lado) ? 'interno' : ''
-  return { tipo: tipo, razon: m[2].trim() }
+  const lineas = limpiarHtml(texto || '').split(/\n+/)
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i]
+    const k = linea.search(/bloque(?:o|ada|ado)\b/i)
+    if (k < 0) continue
+    // Antes de "Bloqueo" solo puede haber una mención (@Nombre Apellido) o símbolos/emojis
+    const antes = linea.slice(0, k).trim()
+    if (antes && !/^@/.test(antes) && /[A-Za-zÀ-ÿ]/.test(antes)) continue
+    const l = linea.slice(k).trim()
+    const m = l.match(/^bloque(?:o|ada|ado)\b\s*(?:por\s+)?(?:el\s+|la\s+)?(del cliente|de cliente|cliente|externo|interno|del equipo|equipo)?\s*[:\-–—]\s*(.+)$/i)
+    if (!m) continue
+    const lado = (m[1] || '').toLowerCase()
+    const tipo = /client|extern/.test(lado) ? 'cliente' : /intern|equipo/.test(lado) ? 'interno' : ''
+    return { tipo: tipo, razon: m[2].trim() }
+  }
+  return null
 }
 
-// Mensajes de las tareas bloqueadas (en paralelo). Se usa el más reciente (mayor id) con formato de bloqueo.
-function motivosBloqueo(token, ids) {
-  const out = {}
+// La API puede devolver [..], {data:[..]}, {messages:[..]} o {items:[..]}
+function listaDe(body) {
+  if (Array.isArray(body)) return body
+  return (body && (body.data || body.messages || body.items || body.results)) || []
+}
+function textoDe(m) { return m && (m.message || m.text || m.body || m.content || m.comment || m.description || '') }
+
+function pedirMensajes(token, ids) {
+  const out = []
   for (let i = 0; i < ids.length; i += 30) {
     const lote = ids.slice(i, i + 30)
-    const resps = UrlFetchApp.fetchAll(lote.map(function (id) {
+    UrlFetchApp.fetchAll(lote.map(function (id) {
       return { url: COR + '/tasks/' + id + '/messages', headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
-    }))
-    resps.forEach(function (r, j) {
-      if (r.getResponseCode() !== 200) return
-      const body = JSON.parse(r.getContentText() || '[]')
-      const lista = (Array.isArray(body) ? body : (body.data || []))
-        .map(function (m) { return { id: Number(m.id) || 0, p: parsearMotivo(m.message || m.text || m.body) } })
-        .filter(function (x) { return x.p })
-        .sort(function (a, b) { return b.id - a.id })
-      if (lista.length) out[lote[j]] = lista[0].p
-    })
+    })).forEach(function (r, j) { out.push({ id: lote[j], code: r.getResponseCode(), text: r.getContentText() || '' }) })
   }
   return out
+}
+
+// Mensajes de las tareas bloqueadas: se usa el más reciente (mayor id / última posición) con formato de bloqueo
+function motivosBloqueo(token, ids) {
+  const out = {}
+  pedirMensajes(token, ids).forEach(function (r) {
+    if (r.code !== 200) return
+    let body
+    try { body = JSON.parse(r.text) } catch (e) { return }
+    const lista = listaDe(body)
+      .map(function (m, pos) { return { orden: Number(m.id) || pos, p: parsearMotivo(textoDe(m)) } })
+      .filter(function (x) { return x.p })
+      .sort(function (a, b) { return b.orden - a.orden })
+    if (lista.length) out[r.id] = lista[0].p
+  })
+  return out
+}
+
+// Muestra qué responde COR en los mensajes de las tareas bloqueadas (para ajustar el formato)
+function diagnosticoBloqueos() {
+  const inst = pedir('Diagnóstico de bloqueos', 'Instancia de COR (' + instancias().join(', ') + '):')
+  if (!inst) return
+  const corId = pedir('Diagnóstico de bloqueos', 'ID del proyecto en COR:')
+  if (!corId) return
+  const token = obtenerToken(credenciales(inst))
+  const bloqueadas = listarTodo(token, '/tasks', { projects: [Number(corId)] })
+    .filter(function (t) { return estadoDe(t) === 'bloqueada' }).slice(0, 5)
+  if (!bloqueadas.length) { SpreadsheetApp.getUi().alert('No hay tareas Estancadas/Suspendidas en ese proyecto.'); return }
+  const resps = pedirMensajes(token, bloqueadas.map(function (t) { return t.id }))
+  const txt = bloqueadas.map(function (t, i) {
+    const r = resps[i]
+    let n = '?', primero = '', motivo = null
+    try {
+      const lista = listaDe(JSON.parse(r.text))
+      n = lista.length
+      primero = lista.length ? JSON.stringify(lista[lista.length - 1]).slice(0, 220) : ''
+      motivo = lista.map(function (m) { return parsearMotivo(textoDe(m)) }).filter(Boolean).pop() || null
+    } catch (e) { primero = r.text.slice(0, 220) }
+    return '• "' + t.title + '" (#' + t.id + ', estado: ' + t.status + ')\n   HTTP ' + r.code + ' · mensajes: ' + n +
+      (primero ? '\n   Último: ' + primero : '') +
+      '\n   Motivo detectado: ' + (motivo ? (motivo.tipo || 'sin tipo') + ' — ' + motivo.razon : 'ninguno')
+  }).join('\n\n')
+  SpreadsheetApp.getUi().alert('Mensajes de tareas bloqueadas:\n\n' + txt)
 }
 
 // Colaboradores por tarea, en paralelo; se cachean 6 h para no agotar la cuota de llamadas
