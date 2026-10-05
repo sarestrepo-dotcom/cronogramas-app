@@ -508,13 +508,22 @@ function parsearMotivo(texto) {
     const antes = linea.slice(0, k).trim()
     if (antes && !/^@/.test(antes) && /[A-Za-zÀ-ÿ]/.test(antes)) continue
     const l = linea.slice(k).trim()
-    const m = l.match(/^bloque(?:o|ada|ado)\b\s*(?:por\s+)?(?:el\s+|la\s+)?(del cliente|de cliente|cliente|externo|interno|del equipo|equipo)?\s*[:\-–—]\s*(.+)$/i)
-    if (!m) continue
+    // El separador (: - —) es opcional: "Bloqueada por el cliente no nos han pasado…"
+    const m = l.match(/^bloque(?:o|ada|ado)\b\s*(?:por\s+)?(?:el\s+|la\s+|lado\s+del?\s+)?(del cliente|de cliente|cliente|externo|interno|del equipo|equipo)?\s*[:\-–—]?\s*(.+)$/i)
+    if (!m || !m[2].trim()) continue
     const lado = (m[1] || '').toLowerCase()
     const tipo = /client|extern/.test(lado) ? 'cliente' : /intern|equipo/.test(lado) ? 'interno' : ''
     return { tipo: tipo, razon: m[2].trim() }
   }
   return null
+}
+
+// Tipo de bloqueo deducido de un texto libre: menciona al cliente → cliente; interno/equipo/nosotros → interno
+function tipoDeTexto(texto) {
+  const t = String(texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  if (/\bclientes?\b|\bexterno\b/.test(t)) return 'cliente'
+  if (/\binterno\b|\bequipo\b|\bnosotros\b|\bnuestr[oa]s?\b/.test(t)) return 'interno'
+  return ''
 }
 
 // La API puede devolver [..], {data:[..]}, {messages:[..]} o {items:[..]}
@@ -535,18 +544,34 @@ function pedirMensajes(token, ids) {
   return out
 }
 
-// Mensajes de las tareas bloqueadas: se usa el más reciente (mayor id / última posición) con formato de bloqueo
+// Motivo de cada tarea bloqueada, a partir de sus mensajes en COR:
+// 1) el mensaje más reciente con formato "Bloqueo/Bloqueada …" (se quita el encabezado)
+// 2) si no hay, el mensaje más reciente de la tarea, completo
+// El tipo (cliente/interno) sale del encabezado o, si no, del texto del mensaje.
+function motivoDeMensajes(lista) {
+  const ordenados = lista
+    .map(function (m, pos) { return { m: m, t: Date.parse(String(m.created_at || m.created || '').replace(' ', 'T')) || 0, id: Number(m.id) || 0, pos: pos } })
+    .sort(function (a, b) { return (b.t - a.t) || (b.id - a.id) || (b.pos - a.pos) })
+  for (let i = 0; i < ordenados.length; i++) {
+    const texto = textoDe(ordenados[i].m)
+    const p = parsearMotivo(texto)
+    if (p) return { tipo: p.tipo || tipoDeTexto(p.razon), razon: p.razon }
+  }
+  for (let i = 0; i < ordenados.length; i++) {
+    const texto = limpiarHtml(textoDe(ordenados[i].m)).replace(/\s+/g, ' ').trim()
+    if (texto) return { tipo: tipoDeTexto(texto), razon: texto }
+  }
+  return null
+}
+
 function motivosBloqueo(token, ids) {
   const out = {}
   pedirMensajes(token, ids).forEach(function (r) {
     if (r.code !== 200) return
     let body
     try { body = JSON.parse(r.text) } catch (e) { return }
-    const lista = listaDe(body)
-      .map(function (m, pos) { return { orden: Number(m.id) || pos, p: parsearMotivo(textoDe(m)) } })
-      .filter(function (x) { return x.p })
-      .sort(function (a, b) { return b.orden - a.orden })
-    if (lista.length) out[r.id] = lista[0].p
+    const motivo = motivoDeMensajes(listaDe(body))
+    if (motivo) out[r.id] = motivo
   })
   return out
 }
@@ -576,7 +601,7 @@ function reporteBloqueos(token, tareas) {
       const lista = listaDe(JSON.parse(r.text))
       n = lista.length
       ultimo = lista.length ? JSON.stringify(lista[lista.length - 1]).slice(0, 220) : ''
-      motivo = lista.map(function (m) { return parsearMotivo(textoDe(m)) }).filter(Boolean).pop() || null
+      motivo = motivoDeMensajes(lista)
     } catch (e) { ultimo = r.text.slice(0, 220) }
     return '• "' + t.title + '" (#' + t.id + ', estado: ' + t.status + ')\n   HTTP ' + r.code + ' · mensajes: ' + n +
       (ultimo ? '\n   Último: ' + ultimo : '') +

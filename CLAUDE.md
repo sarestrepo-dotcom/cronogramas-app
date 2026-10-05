@@ -487,8 +487,10 @@ todas las empresas). Asistente en **Herramientas → COR** (`CorSyncModal`).
   Las subtareas heredan la fase del ancestro más cercano que la tenga.
 - **[Interno]**: tareas con ese prefijo en el título (y sus descendientes) no se sincronizan; si ya estaban, se borran.
 - **Bloqueos**: estancada/suspendida → bloqueada. Motivo y tipo: `/tasks/{id}/messages` (solo de las bloqueadas),
-  mensaje más reciente (mayor id) con formato "Bloqueo cliente|interno: <razón>" o "Bloqueo: <razón>" → `notas` y
-  `bloqueo`. Si no hay mensaje así, notas/bloqueo NO se gestionan (se conserva lo escrito en la app).
+  `motivoDeMensajes`: 1) mensaje más reciente (created_at/id) que empiece por "Bloqueo/Bloqueada…" (separador
+  opcional), 2) si no, el último mensaje completo. Tipo: del encabezado o `tipoDeTexto` (cliente/externo → cliente;
+  interno/equipo/nosotros → interno). Sin mensajes, notas/bloqueo NO se gestionan (se conserva lo de la app).
+  Formato real del mensaje: `{id, type, item_id, user_id, message (HTML), client_shared, client_comment, created_at}`.
   "COR → Diagnóstico" muestra los campos que envía COR para una tarea.
 - **Multiusuario**: solo la cuenta con IAM en Firebase escribe. Ella activa el trigger `tick` (cada minuto:
   sincroniza si hay `pendiente` en Script Properties o pasaron 10 min). Usuarios sin acceso (otro dominio)

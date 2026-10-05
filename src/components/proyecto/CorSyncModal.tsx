@@ -18,7 +18,7 @@ const ARCHIVOS = {
 const MAPEO: Array<[string, string]> = [
   ['Tarea', 'Título y descripción'],
   ['Estado', 'Nueva → Pendiente · En proceso → En progreso · Estancada o Suspendida → Bloqueada · Finalizada → Completada'],
-  ['Motivo del bloqueo', 'Último mensaje de la tarea en COR que empiece por "Bloqueo cliente: …", "Bloqueo interno: …" o "Bloqueo: …". Llena la nota (la ve el cliente en el portal) y el tipo de bloqueo'],
+  ['Motivo del bloqueo', 'El último mensaje de la tarea bloqueada en COR (si alguno empieza por "Bloqueo…/Bloqueada…", ese tiene prioridad). Si menciona al cliente → bloqueo del cliente; interno/equipo → interno. Es la nota que ve el cliente en el portal'],
   ['Prioridad', 'Baja / Media / Alta / Urgente → Crítica'],
   ['Fechas', 'Fecha de inicio (si COR la envía) y fecha de entrega (deadline)'],
   ['Responsables', 'Colaboradores asignados a la tarea'],
