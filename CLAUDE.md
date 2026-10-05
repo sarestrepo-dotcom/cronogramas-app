@@ -477,7 +477,10 @@ todas las empresas). Asistente en **Herramientas → COR** (`CorSyncModal`).
   en_proceso→en_progreso, estancada/suspendida→bloqueada, finalizada→completada. Prioridad 0–3 → baja..critica.
 - Solo toca tareas `origen: 'cor'`; borra las que ya no están o se archivaron. Historial "COR · instancia".
   Escribe `proyectos/{id}.corSync` (badge) y republica portales. Sin webhooks en la API de COR.
-- **Jerarquía**: `padreDe(t)` prueba parent_id / task_parent_id / parent_task_id / parent{id}… (no documentado).
+- **Formato real de la tarea (diagnóstico oct 2026)**: `task_father` (id madre), `father {id,title}`, `datetime`
+  (inicio), `deadline`, `estimated` (h estimadas), `hour_charged` (h cargadas), `collaborators[]` (con email),
+  `pm`, `order_tasks` ("raiz/madre/id/"), `child_q`, `sprint_id`, `message_counter`.
+- **Jerarquía**: `padreDe(t)` usa `task_father` (y prueba parent_id / father{id}… como respaldo).
   Raíz con subtareas y sin fase propia → es la **fase** de sus descendientes (no se crea como tarea);
   madres intermedias → `tipo: 'grupo'` con `parentId: cor_<madre>`; orden = recorrido en profundidad.
 - **Fase**: etiqueta que empiece por "Fase"/"F1…" > categoría > prefijo "[Fase X]" en el título (se quita del título).

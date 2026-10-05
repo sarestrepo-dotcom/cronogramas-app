@@ -220,7 +220,7 @@ function diagnostico() {
     return '• ' + k + ': ' + (v && typeof v === 'object' ? JSON.stringify(v).slice(0, 120) : String(v).slice(0, 80))
   }).join('\n')
   SpreadsheetApp.getUi().alert('Campos de la tarea "' + t.title + '" (' + tareas.length + ' tareas en total):\n\n' + resumenCampos +
-    '\n\nFase detectada: ' + (faseDeTarea(t).fase || '— (ninguna)') +
+    '\n\nFase detectada: ' + (faseDeTarea(t).fase || faseRaizDiagnostico(t, tareas) || '— (ninguna)') +
     '\nTareas con tarea madre detectada: ' + tareas.filter(function (x) { return padreDe(x) }).length + ' de ' + tareas.length +
     (tareas.some(function (x) { return padreDe(x) }) ? '' : '\n⚠️ No se detectó el campo de tarea madre: envía esta pantalla para ajustarlo.'))
 }
@@ -300,7 +300,9 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
     const tid = (h.task && h.task.id) || h.task_id
     if (tid) horas[tid] = (horas[tid] || 0) + (parseFloat(h.duration) || 0)
   })
-  const colaboradores = colaboradoresDe(token, tareasCor.map(function (t) { return t.id }))
+  // COR ya incluye `collaborators` en cada tarea: solo se consultan aparte las que no los traen
+  const colaboradores = colaboradoresDe(token, tareasCor.filter(function (t) { return !Array.isArray(t.collaborators) }).map(function (t) { return t.id }))
+  tareasCor.forEach(function (t) { if (Array.isArray(t.collaborators)) colaboradores[t.id] = t.collaborators })
   // Motivo y tipo del bloqueo: último mensaje de la tarea en COR que empiece por "Bloqueo…"
   const motivos = motivosBloqueo(token, tareasCor.filter(function (t) { return estadoDe(t) === 'bloqueada' }).map(function (t) { return t.id }))
 
@@ -358,8 +360,10 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
       const ini = parsearFechaCor(primero(t, ['datetime', 'start', 'start_date', 'date_start']), tz, false) || fin
       const cols = colaboradores[t.id] || []
       const nombres = cols.map(function (c) { return [c.first_name, c.last_name].filter(Boolean).join(' ').trim() }).filter(Boolean)
-      const estimadas = cols.reduce(function (s, c) { return s + (Number(c.estimated_by_user) || 0) }, 0) ||
+      // Horas: `estimated` / `hour_charged` de la tarea; si no vienen, estimado por colaborador y suma de registros
+      const estimadas = Number(t.estimated) || cols.reduce(function (s, c) { return s + (Number(c.estimated_by_user) || 0) }, 0) ||
         Number(primero(t, ['estimated_time', 'estimated_hours', 'hours_estimated'])) || 0
+      const trabajadas = Number(t.hour_charged) || horas[t.id] || 0
       const sprint = (t.sprint && (t.sprint.name || t.sprint.title)) || primero(t, ['sprint_name']) || ''
       const fd = faseDeTarea(t)
       const fase = fd.fase || faseHeredada(t.id)
@@ -377,7 +381,7 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
         corId: { integerValue: String(t.id) },
         asignadoA: nombres[0] ? { stringValue: nombres[0] } : undefined,
         asignadosA: nombres.length ? { arrayValue: { values: nombres.map(function (n) { return { stringValue: n } }) } } : undefined,
-        horasTrabajadas: { doubleValue: Math.round((horas[t.id] || 0) * 100) / 100 },
+        horasTrabajadas: { doubleValue: Math.round(trabajadas * 100) / 100 },
         horasEstimadas: estimadas ? { doubleValue: Math.round(estimadas * 100) / 100 } : undefined,
         sprint: sprint ? { stringValue: String(sprint) } : undefined,
         fase: fase ? { stringValue: String(fase) } : undefined,
@@ -455,10 +459,21 @@ function idsInternos(tareas) {
   return out
 }
 
+// Para el diagnóstico: nombre de la raíz (p. ej. "SPRINT 01") usando la ruta order_tasks o task_father
+function faseRaizDiagnostico(t, tareas) {
+  const porId = {}
+  tareas.forEach(function (x) { porId[x.id] = x })
+  let raiz = null
+  const ruta = String(t.order_tasks || '').split('/').filter(Boolean)
+  if (ruta.length > 1) raiz = porId[Number(ruta[0])]
+  for (let c = t, n = 0; !raiz && c && n < 50; n++) { const p = padreDe(c); if (!p) { raiz = c === t ? null : c; break } c = porId[p] }
+  return raiz ? String(raiz.title || '').trim() + ' (por jerarquía)' : ''
+}
+
 // Id de la tarea madre en COR. La documentación pública no lo muestra: se prueban los nombres
 // habituales (usa COR → Diagnóstico para ver cuál envía tu instancia).
 function padreDe(t) {
-  const v = primero(t, ['parent_id', 'task_parent_id', 'parent_task_id', 'father_id', 'parentId', 'id_parent'])
+  const v = primero(t, ['task_father', 'parent_id', 'task_parent_id', 'parent_task_id', 'father_id', 'parentId', 'id_parent'])
   if (v && /^\d+$/.test(String(v))) return Number(v)
   const o = t.parent || t.parent_task || t.task_parent || t.father
   if (o && typeof o === 'object' && o.id) return Number(o.id)
