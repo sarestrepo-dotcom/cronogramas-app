@@ -274,7 +274,12 @@ function sincronizarFila(hoja, fila) {
   return res
 }
 
-const ESTADOS = { nueva: 'pendiente', en_proceso: 'en_progreso', estancada: 'bloqueada', finalizada: 'completada' }
+// "Estancada" y "Suspendida" en COR = Bloqueada en el cronograma
+const ESTADOS = {
+  nueva: 'pendiente', en_proceso: 'en_progreso', finalizada: 'completada',
+  estancada: 'bloqueada', suspendida: 'bloqueada', suspendido: 'bloqueada', suspended: 'bloqueada',
+}
+function estadoDe(t) { return ESTADOS[String(t.status || '').toLowerCase().trim()] || 'pendiente' }
 const PRIORIDADES = ['baja', 'media', 'alta', 'critica']
 
 function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
@@ -295,6 +300,8 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
     if (tid) horas[tid] = (horas[tid] || 0) + (parseFloat(h.duration) || 0)
   })
   const colaboradores = colaboradoresDe(token, tareasCor.map(function (t) { return t.id }))
+  // Motivo y tipo del bloqueo: último mensaje de la tarea en COR que empiece por "Bloqueo…"
+  const motivos = motivosBloqueo(token, tareasCor.filter(function (t) { return estadoDe(t) === 'bloqueada' }).map(function (t) { return t.id }))
 
   // 2) Estado actual en Firestore
   const existentes = listarTareasDelProyecto(proyectoId)
@@ -342,7 +349,7 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
       const parentId = padre && !esFaseRaiz(padre) ? 'cor_' + padre : ''
       vistos[id] = true
       const actual = existentes[id]
-      const estado = ESTADOS[t.status] || 'pendiente'
+      const estado = estadoDe(t)
       const progresoActual = actual && actual.fields.progreso ? Number(actual.fields.progreso.integerValue || actual.fields.progreso.doubleValue || 0) : 0
       const progreso = estado === 'completada' ? 100 : estado === 'pendiente' ? 0
         : (progresoActual > 0 && progresoActual < 100 ? progresoActual : 50)
@@ -375,6 +382,11 @@ function sincronizarProyecto(inst, corProjectId, empresaId, proyectoId) {
         fase: fase ? { stringValue: String(fase) } : undefined,
         fechaInicio: ini ? { timestampValue: ini } : undefined,
         fechaFin: fin ? { timestampValue: fin } : undefined,
+      }
+      const motivo = estado === 'bloqueada' ? motivos[t.id] : null
+      if (motivo) {
+        fields.notas = { stringValue: motivo.razon.slice(0, 2000) }
+        if (motivo.tipo) fields.bloqueo = { stringValue: motivo.tipo }
       }
       const campos = Object.keys(fields).filter(function (k) { return !((k === 'fechaInicio' || k === 'fechaFin') && !fields[k]) })
       Object.keys(fields).forEach(function (k) { if (fields[k] === undefined) delete fields[k] })
@@ -464,6 +476,37 @@ function faseDeTarea(t) {
   const m = String(t.title || '').match(/^\s*\[([^\]]+)\]\s*(.*)$/)
   if (m) return { fase: m[1].trim(), titulo: m[2].trim() || m[1].trim() }
   return {}
+}
+
+// "Bloqueo cliente: …", "Bloqueo interno: …" o "Bloqueo: …" (también "Bloqueada …", "del cliente", "externo", "equipo")
+function parsearMotivo(texto) {
+  const t = limpiarHtml(texto || '').replace(/\s+/g, ' ').trim()
+  const m = t.match(/^bloque(?:o|ada|ado)\b\s*(del cliente|de cliente|cliente|externo|interno|del equipo|equipo)?\s*[:\-–—]\s*(.+)$/i)
+  if (!m) return null
+  const lado = (m[1] || '').toLowerCase()
+  const tipo = /client|extern/.test(lado) ? 'cliente' : /intern|equipo/.test(lado) ? 'interno' : ''
+  return { tipo: tipo, razon: m[2].trim() }
+}
+
+// Mensajes de las tareas bloqueadas (en paralelo). Se usa el más reciente (mayor id) con formato de bloqueo.
+function motivosBloqueo(token, ids) {
+  const out = {}
+  for (let i = 0; i < ids.length; i += 30) {
+    const lote = ids.slice(i, i + 30)
+    const resps = UrlFetchApp.fetchAll(lote.map(function (id) {
+      return { url: COR + '/tasks/' + id + '/messages', headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true }
+    }))
+    resps.forEach(function (r, j) {
+      if (r.getResponseCode() !== 200) return
+      const body = JSON.parse(r.getContentText() || '[]')
+      const lista = (Array.isArray(body) ? body : (body.data || []))
+        .map(function (m) { return { id: Number(m.id) || 0, p: parsearMotivo(m.message || m.text || m.body) } })
+        .filter(function (x) { return x.p })
+        .sort(function (a, b) { return b.id - a.id })
+      if (lista.length) out[lote[j]] = lista[0].p
+    })
+  }
+  return out
 }
 
 // Colaboradores por tarea, en paralelo; se cachean 6 h para no agotar la cuota de llamadas
@@ -556,7 +599,7 @@ function limpiarHtml(s) {
 
 // ─── Comparación e historial ──────────────────────────────────────────────────
 
-const CAMPOS_HISTORIAL = ['titulo', 'estado', 'progreso', 'fechaInicio', 'fechaFin', 'asignadosA', 'prioridad', 'sprint', 'horasEstimadas']
+const CAMPOS_HISTORIAL = ['titulo', 'estado', 'progreso', 'fechaInicio', 'fechaFin', 'asignadosA', 'prioridad', 'sprint', 'horasEstimadas', 'notas', 'bloqueo']
 const ESTADO_LABEL = { pendiente: 'Pendiente', en_progreso: 'En progreso', completada: 'Completada', bloqueada: 'Bloqueada' }
 
 function valorComparable(x) {

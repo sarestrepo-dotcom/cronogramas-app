@@ -474,7 +474,7 @@ todas las empresas). Asistente en **Herramientas → COR** (`CorSyncModal`).
 - Cada 10 min (trigger): `/tasks` (filtro projects), `/hours` (suma `duration` por tarea),
   `/tasks/{id}/collaborators` (cacheado 6 h). Doc id `cor_<idCOR>`, `origen: 'cor'`, `corId`,
   `horasTrabajadas`, `horasEstimadas` (suma `estimated_by_user`). Estados: nueva→pendiente,
-  en_proceso→en_progreso, estancada→bloqueada, finalizada→completada. Prioridad 0–3 → baja..critica.
+  en_proceso→en_progreso, estancada/suspendida→bloqueada, finalizada→completada. Prioridad 0–3 → baja..critica.
 - Solo toca tareas `origen: 'cor'`; borra las que ya no están o se archivaron. Historial "COR · instancia".
   Escribe `proyectos/{id}.corSync` (badge) y republica portales. Sin webhooks en la API de COR.
 - **Jerarquía**: `padreDe(t)` prueba parent_id / task_parent_id / parent_task_id / parent{id}… (no documentado).
@@ -483,6 +483,9 @@ todas las empresas). Asistente en **Herramientas → COR** (`CorSyncModal`).
 - **Fase**: etiqueta que empiece por "Fase"/"F1…" > categoría > prefijo "[Fase X]" en el título (se quita del título).
   Las subtareas heredan la fase del ancestro más cercano que la tenga.
 - **[Interno]**: tareas con ese prefijo en el título (y sus descendientes) no se sincronizan; si ya estaban, se borran.
+- **Bloqueos**: estancada/suspendida → bloqueada. Motivo y tipo: `/tasks/{id}/messages` (solo de las bloqueadas),
+  mensaje más reciente (mayor id) con formato "Bloqueo cliente|interno: <razón>" o "Bloqueo: <razón>" → `notas` y
+  `bloqueo`. Si no hay mensaje así, notas/bloqueo NO se gestionan (se conserva lo escrito en la app).
   "COR → Diagnóstico" muestra los campos que envía COR para una tarea.
 - **Multiusuario**: solo la cuenta con IAM en Firebase escribe. Ella activa el trigger `tick` (cada minuto:
   sincroniza si hay `pendiente` en Script Properties o pasaron 10 min). Usuarios sin acceso (otro dominio)
