@@ -14,6 +14,8 @@ import { enrichTareas, buildHierarchy, computeNumeros } from '@/lib/hierarchyUti
 // El Gantt solo se descarga si el cliente lo abre
 const GanttVisual = lazy(() => import('@/components/gantt/GanttVisual').then(m => ({ default: m.GanttVisual })))
 import { cn, formatFecha, ESTADO_COLORS, ESTADO_LABELS, isVencida, diasBloqueada, textoDiasBloqueada } from '@/lib/utils'
+import { calcularSalud, SEMAFORO_ESTILOS } from '@/lib/saludUtils'
+import { BarraAvance } from '@/components/proyecto/BarraAvance'
 import type { Tarea } from '@/types'
 
 // Las reglas rechazan escrituras demasiado seguidas (anti-spam) o con datos inválidos
@@ -68,7 +70,10 @@ export function PortalClientePage() {
   const activas     = enriched.filter(t => t.tipo !== 'grupo')
   const completadas = activas.filter(t => t.estado === 'completada').length
   const enProgreso  = activas.filter(t => t.estado === 'en_progreso').length
-  const avance      = activas.length > 0 ? Math.round((completadas / activas.length) * 100) : 0
+  // Mismo cálculo que el proyecto (promedio del avance de cada tarea) y mismo semáforo de salud
+  const salud       = useMemo(() => calcularSalud(enriched), [enriched])
+  const avance      = salud.avanceReal
+  const est         = SEMAFORO_ESTILOS[salud.semaforo]
 
   const hoy = new Date()
   const diasProy = proyecto ? Math.round((new Date((proyecto.fechaFin as any)?.seconds * 1000).getTime() - hoy.getTime()) / 86400000) : null
@@ -194,22 +199,26 @@ export function PortalClientePage() {
           ))}
         </div>
 
-        {/* Barra de progreso */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-semibold text-slate-700">Avance del proyecto</p>
-            <span className="text-lg font-bold text-indigo-600">{avance}%</span>
-          </div>
-          <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-            <div
-              className={cn('h-full rounded-full transition-all', avance === 100 ? 'bg-emerald-500' : 'bg-indigo-500')}
-              style={{ width: `${avance}%` }}
-            />
+        {/* Salud y avance (igual que en el dashboard del proyecto) */}
+        <div className={cn('rounded-2xl border border-slate-200 p-5 shadow-sm', salud.semaforo === 'sin_datos' ? 'bg-white' : est.bg)}>
+          <div className="flex items-center gap-5 flex-wrap">
+            <div className="flex items-center gap-3 min-w-[180px]">
+              <span className={cn('w-4 h-4 rounded-full flex-shrink-0', est.dot)} />
+              <div>
+                <p className={cn('text-sm font-bold', est.text)}>{est.label}</p>
+                <p className="text-xs text-slate-600">{salud.motivo}</p>
+              </div>
+            </div>
+            <div className="flex-1 min-w-[220px]"><BarraAvance salud={salud} /></div>
+            <div className="text-xs text-slate-600 space-y-0.5">
+              <p><b className={salud.diferencia < 0 ? 'text-red-600' : 'text-emerald-600'}>{salud.diferencia > 0 ? '+' : ''}{salud.diferencia} pts</b> vs. lo planeado</p>
+              <p>{salud.vencidas} vencida{salud.vencidas === 1 ? '' : 's'} · {salud.bloqueadas} bloqueada{salud.bloqueadas === 1 ? '' : 's'}</p>
+            </div>
           </div>
           {proyecto && (
-            <div className="flex justify-between mt-2 text-xs text-slate-400">
-              <span>{formatFecha(proyecto.fechaInicio ?? undefined)}</span>
-              <span>{formatFecha(proyecto.fechaFin ?? undefined)}</span>
+            <div className="flex justify-between mt-3 text-xs text-slate-400">
+              <span>Inicio: {formatFecha(proyecto.fechaInicio ?? undefined)}</span>
+              <span>Cierre: {formatFecha(proyecto.fechaFin ?? undefined)}</span>
             </div>
           )}
         </div>
