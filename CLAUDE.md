@@ -9,7 +9,7 @@ reportes PDF, compartir portales de cliente y gestionar equipos con roles por em
 **URL producción:** https://cronogramas-bluemartech.web.app  
 **Firebase project:** `cronogramas-bluemartech`  
 **Repositorio:** https://github.com/sarestrepo-dotcom/cronogramas-app  
-**Directorio local:** `/Users/sergiorestrepo/Documents/proyectosClaude/cronogramas-app`
+**Directorio local:** `/Users/Checho/Documents/proyectosClaude/cronogramas-app`
 
 ---
 
